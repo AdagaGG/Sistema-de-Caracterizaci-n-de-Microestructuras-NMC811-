@@ -123,7 +123,7 @@ def run_batch(input_dir: str | Path, output_dir: str | Path, config: dict[str, A
 
             stage_start = time.perf_counter()
             current_state = "analyzed"
-            metrics = metrics_fn(refined_labels)
+            metrics = metrics_fn(refined_labels, intensity_image=preprocessed_image)
             validation_payload = validation_fn(metrics, config=validation_config, image_shape=preprocessed_image.shape[:2])
             timings["analyzed"] = time.perf_counter() - stage_start
 

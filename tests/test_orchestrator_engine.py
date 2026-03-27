@@ -84,9 +84,10 @@ def test_run_batch_chains_all_stages_and_returns_deterministic_transitions(tmp_p
         labels[2:5, 2:5] = 1
         return labels
 
-    def extract(mask_labels: np.ndarray) -> pd.DataFrame:
+    def extract(mask_labels: np.ndarray, intensity_image: np.ndarray | None = None) -> pd.DataFrame:
         call_trace.append(("extract", segmentation_core.current_image_id or ""))
         assert mask_labels.dtype == np.int32
+        assert intensity_image is not None
         return _build_annotated_frame().drop(columns=["validation_status", "rejection_reason", "is_edge_particle"])
 
     def validate(metrics: pd.DataFrame, config: object | None = None, image_shape: tuple[int, int] | None = None) -> dict[str, object]:
@@ -166,7 +167,8 @@ def test_run_batch_continues_after_per_image_failure_and_preserves_structured_er
         labels[2:5, 2:5] = 1
         return labels
 
-    def extract(mask_labels: np.ndarray) -> pd.DataFrame:
+    def extract(mask_labels: np.ndarray, intensity_image: np.ndarray | None = None) -> pd.DataFrame:
+        assert intensity_image is not None
         return _build_annotated_frame().drop(columns=["validation_status", "rejection_reason", "is_edge_particle"])
 
     def validate(metrics: pd.DataFrame, config: object | None = None, image_shape: tuple[int, int] | None = None) -> dict[str, object]:

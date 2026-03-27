@@ -178,7 +178,8 @@ def generate_circularity_heatmap_artifacts(
             color = _REJECTED_BRG
             rejected_particles += 1
         else:
-            norm, clipped, invalid_metric = normalize_circularity(getattr(row, "circularity", 0.0))
+            color_metric = getattr(row, "circularity_effective", getattr(row, "circularity", 0.0))
+            norm, clipped, invalid_metric = normalize_circularity(color_metric)
             clipped_count += int(clipped)
             invalid_metric_count += int(invalid_metric)
             color = circularity_to_bgr(norm)
@@ -202,6 +203,7 @@ def generate_circularity_heatmap_artifacts(
             "strategy": "fixed_domain",
             "domain": [0.0, 1.0],
             "formula": "norm = clip((circularity - 0.0) / (1.0 - 0.0), 0.0, 1.0)",
+            "source_metric": "circularity_effective if available, else circularity",
         },
         "colormap": {
             "lut_name": "circularity_red_to_green_v1",

@@ -17,10 +17,14 @@ def test_extract_metrics_returns_expected_schema_and_compatibility_columns() -> 
         "area_px",
         "area_um2",
         "perimeter_px",
+        "perimeter_um",
         "circularity",
         "equivalent_diameter_px",
         "equivalent_diameter_um",
         "aspect_ratio",
+        "bbox",
+        "contour_points",
+        "centroid_xy",
         "area",
         "perimeter",
     }
@@ -31,6 +35,8 @@ def test_extract_metrics_returns_expected_schema_and_compatibility_columns() -> 
     assert int(row["id"]) == 1
     assert float(row["area"]) == float(row["area_px"])
     assert float(row["perimeter"]) == float(row["perimeter_px"])
+    assert isinstance(row["contour_points"], list)
+    assert len(row["contour_points"]) >= 3
 
 
 def test_extract_metrics_computes_area_and_unit_conversions() -> None:
@@ -87,3 +93,20 @@ def test_extract_metrics_accepts_int32_labeled_masks_with_background_zero() -> N
 
     assert list(metrics["id"]) == [1, 2]
     assert all(metrics["area_px"] > 0)
+
+
+def test_extract_metrics_internal_crack_penalizes_effective_circularity() -> None:
+    labels = np.zeros((64, 64), dtype=np.int32)
+    yy, xx = np.ogrid[:64, :64]
+    particle = (xx - 32) ** 2 + (yy - 32) ** 2 <= 14**2
+    labels[particle] = 1
+
+    intensity = np.full((64, 64), 180, dtype=np.uint8)
+    intensity[20:44, 30:34] = 10
+
+    metrics = extract_metrics(labels, intensity_image=intensity)
+    row = metrics.iloc[0]
+
+    assert float(row["circularity"]) > 0.8
+    assert float(row["crack_severity"]) > 0.0
+    assert float(row["circularity_effective"]) < float(row["circularity"])
