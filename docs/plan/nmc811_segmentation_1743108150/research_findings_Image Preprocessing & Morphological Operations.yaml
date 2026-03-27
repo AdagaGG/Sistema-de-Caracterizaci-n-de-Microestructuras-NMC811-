@@ -1,0 +1,721 @@
+plan_id: nmc811_segmentation_1743108150
+objective: Develop a modular Computer Vision pipeline using MobileSAM and Python to automatically segment active material particles in 16-bit FIB-SEM .tif images, generating exportable geometric datasets to Excel for deep statistical analysis of cathode degradation
+focus_area: Image Preprocessing & Morphological Operations
+created_at: "2026-03-26T14:39:18Z"
+created_by: gem-researcher
+status: completed
+
+tldr: |
+  - NO existing codebase found; this is a greenfield project requiring complete implementation from scratch
+  - 6 gold standard 16-bit .tif FIB-SEM images located at gold_standard/ directory (img_RDBS_0050 to img_RDBS_0485)
+  - PRD defines complete preprocessing workflow: CLAHE → MobileSAM → Morphological Refinement → Geometric Metrics → Validation → Export
+  - Key libraries identified: tifffile (16-bit preservation), OpenCV (CLAHE, morphology), scikit-image (clear_border, regionprops), MobileSAM (segmentation), pandas (CSV export)
+  - Combined validation filter required: area [50-10000px] + aspect_ratio [0.25-4.0] + circularity (no minimum) + exclude_edge_particles=true
+  - Critical preprocessing steps: (1) 16-bit TIFF loading without conversion, (2) CLAHE with clip_limit & tile_grid_size tuning, (3) Morphological opening (erosion→dilation) to separate touching particles
+  - Edge particle exclusion via scikit-image clear_border or manual border detection with numpy mask operations
+  - GPU memory constraint: RTX 4060 8GB VRAM requires sequential processing with cleanup between images
+
+research_metadata:
+  methodology: |
+    Multi-pass hybrid research approach for complex task:
+    - Pass 1: Repository structure analysis (glob for .py, .yaml, .tif files) + PRD deep dive for scope/constraints
+    - Pass 2: External documentation research via Context7 for OpenCV, scikit-image, tifffile, MobileSAM, pandas, numpy libraries
+    - Pass 3: Pattern synthesis for preprocessing pipelines, morphological operations, edge handling, validation filters
+    - Tools used: view (PRD), glob (file discovery), context7-resolve-library-id, context7-query-docs (external docs), sequential reasoning for complex domain synthesis
+    - No codebase available; research focused on best practices from official library documentation
+  scope: |
+    Comprehensive exploration of Image Preprocessing & Morphological Operations domain for particle segmentation pipeline.
+    Coverage: 16-bit TIFF I/O, CLAHE adaptive equalization, morphological operations (erosion, dilation, opening, closing),
+    edge particle detection/exclusion, validation filters (area, circularity, aspect ratio), contour analysis, geometric measurements.
+    Excluded from scope: MobileSAM model training, 3D reconstruction, cloud processing, real-time video, hyperparameter autotuning.
+  confidence: high
+  coverage: 100
+
+files_analyzed:
+- file: PRD.yaml
+  path: docs/PRD.yaml
+  purpose: Product Requirements Document defining complete segmentation pipeline scope, acceptance criteria, validation thresholds, and feature specifications
+  key_elements:
+  - element: validation_thresholds
+    type: configuration
+    location: docs/PRD.yaml:62-66
+    description: |
+      Particle filtering criteria: area_range_pixels [50, 10000], aspect_ratio_range [0.25, 4.0],
+      circularity_min=null (no threshold), exclude_edge_particles=true
+  - element: scope.in_scope
+    type: requirements
+    location: docs/PRD.yaml:19-31
+    description: |
+      Defines preprocessing workflow: 16-bit .tif ingestion → CLAHE preprocessing → MobileSAM segmentation →
+      Morphological border refinement (opening) → Geometric metrics extraction → Particle validation →
+      CSV export with physical unit conversion (0.08431 μm/px scale)
+  - element: state_machines.Image Processing State
+    type: workflow
+    location: docs/PRD.yaml:97-119
+    description: |
+      Processing pipeline states: raw → preprocessed (CLAHE) → segmented (MobileSAM) → refined (morphological opening) →
+      analyzed (metrics calculation) → exported (CSV + visualization)
+  - element: features.CLAHE Preprocessing Module
+    type: feature
+    location: docs/PRD.yaml:69-71
+    description: Adaptive histogram equalization to enhance contrast in FIB-SEM images before segmentation
+  - element: features.Morphological Refinement Pipeline
+    type: feature
+    location: docs/PRD.yaml:76-78
+    description: Opening operations (erosion + dilation) to separate touching particles in binary masks
+  - element: features.Particle Validation Filter
+    type: feature
+    location: docs/PRD.yaml:84-86
+    description: Combined area + circularity + aspect ratio thresholds to reject noise and artifacts
+  language: yaml
+  lines: 157
+
+- file: img_RDBS_0050.tif
+  path: gold_standard/img_RDBS_0050.tif
+  purpose: Gold standard 16-bit FIB-SEM image for NMC811 cathode particle segmentation (sample 1 of 6)
+  key_elements:
+  - element: image_data
+    type: binary
+    location: gold_standard/img_RDBS_0050.tif
+    description: 16-bit TIFF format requiring tifffile.imread for bit-depth preservation
+  language: binary
+  lines: 0
+
+- file: img_RDBS_0100.tif
+  path: gold_standard/img_RDBS_0100.tif
+  purpose: Gold standard 16-bit FIB-SEM image (sample 2 of 6)
+  key_elements:
+  - element: image_data
+    type: binary
+    location: gold_standard/img_RDBS_0100.tif
+    description: 16-bit TIFF format for particle segmentation
+  language: binary
+  lines: 0
+
+- file: img_RDBS_0200.tif
+  path: gold_standard/img_RDBS_0200.tif
+  purpose: Gold standard 16-bit FIB-SEM image (sample 3 of 6)
+  key_elements:
+  - element: image_data
+    type: binary
+    location: gold_standard/img_RDBS_0200.tif
+    description: 16-bit TIFF format for particle segmentation
+  language: binary
+  lines: 0
+
+- file: img_RDBS_0300.tif
+  path: gold_standard/img_RDBS_0300.tif
+  purpose: Gold standard 16-bit FIB-SEM image (sample 4 of 6)
+  key_elements:
+  - element: image_data
+    type: binary
+    location: gold_standard/img_RDBS_0300.tif
+    description: 16-bit TIFF format for particle segmentation
+  language: binary
+  lines: 0
+
+- file: img_RDBS_0400.tif
+  path: gold_standard/img_RDBS_0400.tif
+  purpose: Gold standard 16-bit FIB-SEM image (sample 5 of 6)
+  key_elements:
+  - element: image_data
+    type: binary
+    location: gold_standard/img_RDBS_0400.tif
+    description: 16-bit TIFF format for particle segmentation
+  language: binary
+  lines: 0
+
+- file: img_RDBS_0485.tif
+  path: gold_standard/img_RDBS_0485.tif
+  purpose: Gold standard 16-bit FIB-SEM image (sample 6 of 6)
+  key_elements:
+  - element: image_data
+    type: binary
+    location: gold_standard/img_RDBS_0485.tif
+    description: 16-bit TIFF format for particle segmentation
+  language: binary
+  lines: 0
+
+patterns_found:
+- category: image_io
+  pattern: 16-bit TIFF preservation with tifffile
+  description: |
+    FIB-SEM microscopy images stored as 16-bit TIFF require specialized loading to preserve bit depth.
+    Standard libraries (PIL, cv2.imread) may convert to 8-bit, losing dynamic range critical for preprocessing.
+  examples:
+  - file: tifffile documentation
+    location: /cgohlke/tifffile
+    snippet: |
+      import numpy as np
+      from tifffile import imread
+      # Read 16-bit TIFF preserving dtype
+      image = imread('microscopy_data.tif')
+      print(f"Shape: {image.shape}, dtype: {image.dtype}")  # dtype: uint16
+  prevalence: required
+
+- category: preprocessing
+  pattern: CLAHE adaptive histogram equalization
+  description: |
+    Contrast Limited Adaptive Histogram Equalization (CLAHE) enhances local contrast by dividing image into tiles
+    and equalizing each tile's histogram with contrast limiting to avoid noise amplification. Critical for compensating
+    brightness gradients and enhancing cracks in FIB-SEM images.
+  examples:
+  - file: OpenCV CLAHE documentation
+    location: /websites/opencv_5_x
+    snippet: |
+      import cv2 as cv
+      img = cv.imread('input.png', cv.IMREAD_GRAYSCALE)
+      # Create CLAHE object with tunable parameters
+      clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+      cl1 = clahe.apply(img)
+  prevalence: required
+
+- category: morphological_operations
+  pattern: Opening operation for particle separation
+  description: |
+    Morphological opening (erosion followed by dilation) removes small protrusions and separates touching particles.
+    Used to refine binary masks after segmentation, ensuring adjacent particles are properly separated.
+  examples:
+  - file: OpenCV morphology documentation
+    location: /websites/opencv_5_x
+    snippet: |
+      import cv2 as cv
+      # Opening = erosion + dilation
+      kernel = cv.getStructuringElement(cv.MORPH_RECT, (5, 5))
+      opening = cv.morphologyEx(img, cv.MORPH_OPEN, kernel)
+      # Alternative: manual erosion → dilation
+      eroded = cv.erode(img, kernel, iterations=1)
+      opened = cv.dilate(eroded, kernel, iterations=1)
+  prevalence: required
+
+- category: morphological_operations
+  pattern: Structuring element (kernel) selection
+  description: |
+    Structuring elements define neighborhood shape for morphological operations. Common shapes: rectangle (MORPH_RECT),
+    ellipse (MORPH_ELLIPSE), cross (MORPH_CROSS). Size and shape impact separation effectiveness.
+  examples:
+  - file: OpenCV structuring element
+    location: /websites/opencv_5_x
+    snippet: |
+      import cv2 as cv
+      # Rectangular kernel 5x5
+      rect_kernel = cv.getStructuringElement(cv.MORPH_RECT, (5, 5))
+      # Elliptical kernel 7x7
+      ellipse_kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (7, 7))
+  prevalence: common
+
+- category: edge_handling
+  pattern: Edge particle exclusion via clear_border
+  description: |
+    Particles touching image boundaries are incomplete and excluded from analysis for more precise measurements.
+    Scikit-image provides clear_border function, or manual numpy mask operations can identify border-touching regions.
+  examples:
+  - file: scikit-image clear_border (inferred from regionprops docs)
+    location: /scikit-image/scikit-image
+    snippet: |
+      # Manual border detection approach
+      import numpy as np
+      from scipy import ndimage
+      labeled, _ = ndimage.label(binary_mask)
+      # Identify labels touching borders
+      border_labels = np.unique(np.concatenate([
+          labeled[0, :], labeled[-1, :], labeled[:, 0], labeled[:, -1]
+      ]))
+      border_labels = border_labels[border_labels != 0]  # Remove background
+      # Create mask excluding border particles
+      mask = np.isin(labeled, border_labels, invert=True)
+  prevalence: required
+
+- category: validation
+  pattern: Combined area + circularity + aspect ratio filtering
+  description: |
+    Multi-criteria validation reduces false positives from noise/artifacts. Area filter removes too-small (noise)
+    and too-large (merged) particles. Aspect ratio filter removes extreme elongations (artifacts). Circularity
+    exported without minimum threshold for posterior analysis.
+  examples:
+  - file: PRD validation thresholds
+    location: docs/PRD.yaml:62-66
+    snippet: |
+      validation_thresholds:
+        area_range_pixels: [50, 10000]
+        circularity_min: null  # No minimum, export all
+        aspect_ratio_range: [0.25, 4.0]  # 1:4 to 4:1 ratio
+        exclude_edge_particles: true
+  prevalence: required
+
+- category: geometry_measurement
+  pattern: Contour-based geometric metrics
+  description: |
+    OpenCV findContours + contour functions extract geometric properties: area (contourArea), perimeter (arcLength),
+    circularity (4πA/P²), bounding rectangle (boundingRect for aspect ratio), equivalent diameter (√(4A/π)).
+  examples:
+  - file: OpenCV contour analysis
+    location: /websites/opencv_5_x
+    snippet: |
+      import cv2 as cv
+      import numpy as np
+      contours, _ = cv.findContours(binary_mask, cv.RETR_LIST, cv.CHAIN_APPROX_NONE)
+      for cnt in contours:
+          area = cv.contourArea(cnt)
+          perimeter = cv.arcLength(cnt, True)
+          circularity = 4 * np.pi * area / (perimeter ** 2) if perimeter > 0 else 0
+          x, y, w, h = cv.boundingRect(cnt)
+          aspect_ratio = float(w) / h if h > 0 else 0
+  prevalence: required
+
+- category: data_export
+  pattern: Pandas DataFrame to CSV consolidation
+  description: |
+    Geometric metrics from multiple images consolidated into single pandas DataFrame, then exported to CSV for
+    statistical analysis. DataFrame supports column-based organization and easy appending of results.
+  examples:
+  - file: pandas to_csv documentation
+    location: /websites/pandas_pydata
+    snippet: |
+      import pandas as pd
+      df = pd.DataFrame([
+          ["img1", 1, 1200, 150, 0.85, 35.6],
+          ["img1", 2, 890, 128, 0.72, 30.1]
+      ], columns=["image", "particle_id", "area_px", "perimeter_px", "circularity", "diameter_um"])
+      df.to_csv("analisis_gold_standard.csv", index=False)
+  prevalence: required
+
+related_architecture:
+  components_relevant_to_domain:
+  - component: Image Input Module
+    responsibility: Load 16-bit TIFF images without lossy conversion, preserve dtype uint16 for full dynamic range
+    location: To be implemented (greenfield)
+    relationship_to_domain: "Preprocessing depends on correct 16-bit loading; feeds into CLAHE module"
+
+  - component: CLAHE Preprocessing Module
+    responsibility: Apply adaptive histogram equalization to enhance contrast and compensate brightness gradients
+    location: To be implemented (feature status=planned per PRD)
+    relationship_to_domain: "Receives raw 16-bit images, outputs enhanced images for segmentation; state transition: raw → preprocessed"
+
+  - component: MobileSAM Segmentation Engine
+    responsibility: Generate instance segmentation masks using pretrained MobileSAM model (hybrid automatic + manual refinement)
+    location: To be implemented (feature status=planned per PRD)
+    relationship_to_domain: "Receives preprocessed images, outputs binary masks for morphological refinement; state transition: preprocessed → segmented"
+
+  - component: Morphological Refinement Pipeline
+    responsibility: Apply opening operations to separate touching particles, refine mask boundaries
+    location: To be implemented (feature status=planned per PRD)
+    relationship_to_domain: "Core domain component; receives segmentation masks, outputs refined masks for geometric analysis; state transition: segmented → refined"
+
+  - component: Geometric Metrics Extractor
+    responsibility: Calculate area, perimeter, circularity, diameter, aspect ratio per particle from refined masks
+    location: To be implemented (feature status=planned per PRD)
+    relationship_to_domain: "Consumes refined masks from morphological operations, generates metrics for validation filter"
+
+  - component: Particle Validation Filter
+    responsibility: Apply combined area + circularity + aspect ratio thresholds, exclude edge particles
+    location: To be implemented (feature status=planned per PRD)
+    relationship_to_domain: "Domain depends on morphological refinement outputs; filters invalid particles before export"
+
+  - component: CSV Export Module
+    responsibility: Consolidate metrics from 6 images into single DataFrame, export to analisis_gold_standard.csv
+    location: To be implemented (feature status=planned per PRD)
+    relationship_to_domain: "Final consumer of validated geometric data; receives filtered metrics from validation module"
+
+  interfaces_used_by_domain:
+  - interface: tifffile.imread
+    location: External library (tifffile)
+    usage_pattern: |
+      Load 16-bit TIFF without conversion:
+      image = tifffile.imread('gold_standard/img_RDBS_0050.tif')  # Returns numpy array, dtype=uint16
+
+  - interface: cv.createCLAHE
+    location: External library (OpenCV)
+    usage_pattern: |
+      Create CLAHE object with tunable parameters:
+      clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+      enhanced = clahe.apply(image)
+
+  - interface: cv.morphologyEx
+    location: External library (OpenCV)
+    usage_pattern: |
+      Apply morphological opening:
+      kernel = cv.getStructuringElement(cv.MORPH_RECT, (5, 5))
+      refined_mask = cv.morphologyEx(binary_mask, cv.MORPH_OPEN, kernel)
+
+  - interface: cv.findContours
+    location: External library (OpenCV)
+    usage_pattern: |
+      Extract contours from binary mask:
+      contours, _ = cv.findContours(binary_mask, cv.RETR_LIST, cv.CHAIN_APPROX_NONE)
+
+  - interface: cv.contourArea / cv.arcLength / cv.boundingRect
+    location: External library (OpenCV)
+    usage_pattern: |
+      Measure geometric properties:
+      area = cv.contourArea(cnt)
+      perimeter = cv.arcLength(cnt, True)
+      x, y, w, h = cv.boundingRect(cnt)
+
+  - interface: numpy boolean indexing
+    location: External library (numpy)
+    usage_pattern: |
+      Filter particles by validation criteria:
+      valid_mask = (areas >= 50) & (areas <= 10000) & (aspect_ratios >= 0.25) & (aspect_ratios <= 4.0)
+
+  - interface: pandas.DataFrame.to_csv
+    location: External library (pandas)
+    usage_pattern: |
+      Export consolidated metrics:
+      df.to_csv("analisis_gold_standard.csv", index=False)
+
+  data_flow_involving_domain: |
+    1. Input: 16-bit TIFF images (gold_standard/*.tif) → tifffile.imread → numpy array (uint16)
+    2. Preprocessing: numpy array → cv.createCLAHE().apply() → enhanced array
+    3. Segmentation: enhanced array → MobileSAM → binary masks (uint8)
+    4. Morphological Refinement: binary masks → cv.morphologyEx(MORPH_OPEN) → refined masks
+    5. Edge Exclusion: refined masks → numpy border detection + masking → edge-filtered masks
+    6. Contour Extraction: edge-filtered masks → cv.findContours → list of contours
+    7. Geometric Measurement: contours → cv.contourArea/arcLength/boundingRect → area, perimeter, aspect_ratio
+    8. Circularity Calculation: area, perimeter → 4πA/P² → circularity metric
+    9. Validation Filtering: metrics → numpy boolean indexing → valid particles only
+    10. Unit Conversion: pixel metrics → multiply by 0.08431 μm/px scale → physical units
+    11. Export: pandas DataFrame → to_csv → analisis_gold_standard.csv
+
+  key_relationships_to_domain:
+  - from: Image Input Module
+    to: CLAHE Preprocessing Module
+    relationship: provides 16-bit numpy array
+
+  - from: CLAHE Preprocessing Module
+    to: MobileSAM Segmentation Engine
+    relationship: provides contrast-enhanced image
+
+  - from: MobileSAM Segmentation Engine
+    to: Morphological Refinement Pipeline
+    relationship: provides binary segmentation masks
+
+  - from: Morphological Refinement Pipeline
+    to: Geometric Metrics Extractor
+    relationship: provides refined particle masks with separated boundaries
+
+  - from: Geometric Metrics Extractor
+    to: Particle Validation Filter
+    relationship: provides raw geometric measurements (area, perimeter, circularity, aspect_ratio)
+
+  - from: Particle Validation Filter
+    to: CSV Export Module
+    relationship: provides filtered, valid particle metrics ready for export
+
+related_technology_stack:
+  languages_used_in_domain:
+  - Python (3.x, primary language per PRD Conda environment)
+
+  frameworks_used_in_domain:
+  - name: OpenCV (cv2)
+    usage_in_domain: |
+      CLAHE preprocessing (createCLAHE), morphological operations (morphologyEx, erode, dilate, getStructuringElement),
+      contour detection (findContours), geometric measurements (contourArea, arcLength, boundingRect, minAreaRect)
+
+  - name: scikit-image
+    usage_in_domain: |
+      Alternative preprocessing (exposure.equalize_adapthist for CLAHE), morphological operations (morphology module),
+      edge particle removal (clear_border), region properties (measure.regionprops for alternative geometry extraction)
+
+  libraries_used_in_domain:
+  - name: tifffile
+    purpose_in_domain: |
+      Load/save 16-bit TIFF images preserving bit depth (imread, imwrite). Critical for FIB-SEM microscopy data
+      to avoid lossy 8-bit conversion.
+
+  - name: numpy
+    purpose_in_domain: |
+      Array operations, boolean masking for validation filters, border detection, mathematical calculations
+      (circularity formula, unit conversion, aspect ratio computation).
+
+  - name: pandas
+    purpose_in_domain: |
+      Organize geometric metrics in tabular format, consolidate results from 6 images into single DataFrame,
+      export to CSV via to_csv() for statistical analysis.
+
+  - name: MobileSAM (mobile_sam)
+    purpose_in_domain: |
+      Lightweight Segment Anything model for instance segmentation. Used via SamAutomaticMaskGenerator for automatic
+      mask generation or SamPredictor for manual refinement. GPU-efficient (suitable for RTX 4060 8GB VRAM).
+
+  - name: PyTorch (torch)
+    purpose_in_domain: |
+      Backend for MobileSAM model inference. Requires CUDA support for GPU acceleration. Used indirectly through
+      MobileSAM API (model.to(device='cuda'), model.eval()).
+
+  - name: scipy (scipy.ndimage)
+    purpose_in_domain: |
+      Alternative for morphological operations (binary_fill_holes, binary_erosion, binary_dilation), connected
+      component labeling (ndimage.label) for particle identification.
+
+  external_apis_used_in_domain: []
+
+related_conventions:
+  naming_patterns_in_domain: |
+    - Image files: snake_case with prefix pattern (img_RDBS_NNNN.tif)
+    - Module names: descriptive_snake_case (clahe_preprocessing_module, morphological_refinement_pipeline)
+    - Configuration keys: snake_case (area_range_pixels, clip_limit, tile_grid_size, exclude_edge_particles)
+    - State machine states: lowercase (raw, preprocessed, segmented, refined, analyzed, exported)
+    - Metric columns: snake_case with units (area_px, perimeter_px, diameter_um, circularity)
+
+  structure_of_domain: |
+    Recommended modular pipeline structure (to be implemented):
+    - preprocessing/
+      - tiff_loader.py (16-bit TIFF I/O)
+      - clahe_enhancer.py (CLAHE adaptive equalization)
+    - morphology/
+      - opening_refiner.py (erosion + dilation operations)
+      - edge_excluder.py (border particle removal)
+      - kernel_utils.py (structuring element generation)
+    - geometry/
+      - contour_analyzer.py (findContours + metric calculation)
+      - circularity_calculator.py (4πA/P² formula)
+      - unit_converter.py (pixel to μm conversion)
+    - validation/
+      - particle_filter.py (combined area + aspect_ratio + circularity filters)
+    - export/
+      - csv_exporter.py (pandas DataFrame consolidation)
+
+  error_handling_in_domain: |
+    PRD defines error codes for common failures:
+    - ERR_VRAM_001: GPU memory exceeded during segmentation
+    - ERR_MASK_002: No valid particles detected after filtering (check thresholds)
+    - ERR_IO_003: Failed to read 16-bit TIFF (verify tifffile library version)
+    - ERR_METRIC_004: Circularity calculation failed (perimeter=0, check contour extraction)
+    
+    Recommended preprocessing-specific error handling:
+    - Validate 16-bit dtype after loading (assert image.dtype == np.uint16)
+    - Check CLAHE parameters (clip_limit > 0, tile_grid_size valid)
+    - Verify kernel size for morphology (odd dimensions, positive values)
+    - Handle zero perimeter edge case in circularity (return 0 or NaN)
+    - Validate area/aspect_ratio ranges before filtering
+
+  testing_in_domain: |
+    PRD acceptance criteria define test scenarios:
+    - Unit test: Circularity formula on synthetic shapes (circle=1.0, square≈0.785)
+    - Integration test: 6 gold_standard images processed without VRAM overflow (<7.5GB peak)
+    - Visual test: Segmentation masks separate adjacent particles in high-density regions
+    - Quantitative test: CSV contains >90% of manually counted particles (2 reference images)
+    - Performance test: Pipeline completes 6 images in <30 minutes on RTX 4060
+    
+    Recommended preprocessing tests:
+    - Test 16-bit preservation: Load TIFF → verify dtype=uint16, no clipping
+    - Test CLAHE enhancement: Verify histogram spread increases, gradients reduced
+    - Test morphological opening: Verify separation of synthetic touching circles
+    - Test edge exclusion: Verify particles on border removed, interior particles retained
+    - Test validation filter: Verify particles outside thresholds rejected
+
+  documentation_in_domain: |
+    No existing documentation (greenfield project). Recommended:
+    - Function docstrings: Parameters (types, ranges), returns, raises (error codes from PRD)
+    - Configuration comments: Explain CLAHE parameters (clip_limit impact, tile_grid_size tradeoffs)
+    - Pipeline flowcharts: Visualize state transitions (raw → preprocessed → segmented → refined → analyzed → exported)
+    - Parameter tuning guides: Document impact of kernel size, CLAHE settings, validation thresholds on results
+
+related_dependencies:
+  internal:
+  - component: MobileSAM Segmentation Engine
+    relationship_to_domain: "Morphological refinement receives binary masks from segmentation as input"
+    direction: inbound
+
+  - component: Geometric Metrics Extractor
+    relationship_to_domain: "Consumes refined masks from morphological pipeline for contour analysis"
+    direction: outbound
+
+  - component: Particle Validation Filter
+    relationship_to_domain: "Validation filter depends on geometric metrics calculated from refined masks"
+    direction: outbound
+
+  external:
+  - name: tifffile
+    purpose_for_domain: 16-bit TIFF I/O without lossy conversion
+
+  - name: opencv-python (cv2)
+    purpose_for_domain: CLAHE, morphological operations, contour analysis, geometric measurements
+
+  - name: scikit-image
+    purpose_for_domain: Alternative preprocessing/morphology, edge particle removal, region properties
+
+  - name: numpy
+    purpose_for_domain: Array operations, boolean masking, mathematical calculations
+
+  - name: pandas
+    purpose_for_domain: DataFrame organization and CSV export
+
+  - name: scipy
+    purpose_for_domain: Alternative morphological operations, connected component labeling
+
+  - name: mobile-sam (or mobilesam)
+    purpose_for_domain: Lightweight SAM for instance segmentation (GPU-efficient)
+
+  - name: torch (PyTorch)
+    purpose_for_domain: Backend for MobileSAM inference with CUDA support
+
+domain_security_considerations:
+  sensitive_areas:
+  - area: 16-bit TIFF file loading
+    location: Image Input Module
+    concern: |
+      Incorrect bit-depth handling could expose system to integer overflow vulnerabilities if external libraries
+      mishandle uint16 data. Use tifffile (trusted library) instead of custom parsers.
+
+  - area: File path handling for batch processing
+    location: Image Input Module, CSV Export Module
+    concern: |
+      Processing multiple files from gold_standard/ directory requires path validation to prevent directory traversal.
+      Use os.path.abspath() and verify files exist within expected directory.
+
+  - area: GPU memory management
+    location: MobileSAM Segmentation Engine (indirectly impacts morphology)
+    concern: |
+      VRAM overflow (>8GB) could crash pipeline. Implement torch.cuda.empty_cache() between images and monitor memory
+      usage. ERR_VRAM_001 error code defined for this failure mode.
+
+  authentication_patterns_in_domain: Not applicable (offline local processing)
+
+  authorization_patterns_in_domain: Not applicable (single-user research tool)
+
+  data_validation_in_domain: |
+    - Input validation: Verify .tif extension, check file exists, confirm 16-bit dtype after loading
+    - Parameter validation: CLAHE clip_limit > 0, tile_grid_size valid (e.g., (8,8)), kernel dimensions odd and positive
+    - Geometry validation: Check perimeter > 0 before circularity calculation, area > 0 before equivalent diameter
+    - Threshold validation: Verify area_range [min, max] with min < max, aspect_ratio_range [0.25, 4.0]
+    - Output validation: Confirm CSV contains expected columns, no NaN/Inf in physical unit conversions
+
+testing_patterns:
+  framework: |
+    No existing test framework (greenfield). Recommended: pytest for unit/integration tests, manual validation for
+    visual/quantitative tests per PRD acceptance criteria.
+
+  coverage_areas:
+  - 16-bit TIFF loading and dtype preservation
+  - CLAHE preprocessing enhancement effectiveness
+  - Morphological opening particle separation
+  - Edge particle exclusion accuracy
+  - Geometric metric calculation correctness (circularity, aspect_ratio)
+  - Validation filter thresholds (area, aspect_ratio, edge exclusion)
+  - CSV export format and consolidation
+  - GPU memory management (VRAM < 7.5GB)
+
+  test_organization: |
+    Recommended structure:
+    - tests/preprocessing/
+      - test_tiff_loader.py (16-bit preservation, error handling)
+      - test_clahe_enhancer.py (contrast enhancement validation)
+    - tests/morphology/
+      - test_opening_refiner.py (particle separation on synthetic data)
+      - test_edge_excluder.py (border detection accuracy)
+    - tests/geometry/
+      - test_contour_analyzer.py (metric calculation on known shapes)
+      - test_circularity_calculator.py (unit test: circle=1.0, square≈0.785)
+    - tests/validation/
+      - test_particle_filter.py (threshold filtering correctness)
+    - tests/integration/
+      - test_pipeline_end_to_end.py (6 images, VRAM monitoring, CSV verification)
+
+  mock_patterns:
+  - |
+    Mock MobileSAM for preprocessing/morphology tests to avoid GPU dependency:
+    Use synthetic binary masks instead of actual segmentation output
+  - |
+    Mock tifffile.imread for unit tests:
+    Return pre-generated numpy arrays with known properties (dtype=uint16, specific dimensions)
+
+open_questions:
+- question: What are the optimal CLAHE parameters (clip_limit, tile_grid_size) for FIB-SEM NMC811 images?
+  context: |
+    PRD mentions CLAHE for brightness gradient compensation and crack enhancement but does not specify parameters.
+    Research shows default clip_limit=40.0, tile_grid_size=(8,8) in OpenCV, but microscopy images may require tuning.
+    Need empirical testing on gold_standard images to determine optimal settings.
+
+- question: What structuring element shape and size should be used for morphological opening?
+  context: |
+    PRD specifies opening operations to separate adjacent particles but does not define kernel parameters.
+    Options: rectangular (MORPH_RECT), elliptical (MORPH_ELLIPSE), cross (MORPH_CROSS) with varying sizes (3x3, 5x5, 7x7).
+    Larger kernels provide stronger separation but may erode small particles. Requires experimentation.
+
+- question: How should circularity be exported when no minimum threshold is applied?
+  context: |
+    PRD sets circularity_min=null (no minimum threshold) to export all particles for posterior filtering.
+    Fractured particles may have circularity < 0.5. Need to confirm if negative circularity values (from degenerate
+    contours with perimeter=0) should be handled specially (e.g., set to 0 or NaN).
+
+- question: Should edge particle exclusion occur before or after morphological refinement?
+  context: |
+    Task clarification specifies "Exclude particles touching image borders" but does not define pipeline order.
+    Option 1: Exclude before morphology (cleaner processing, fewer operations).
+    Option 2: Exclude after morphology (more accurate boundary detection on refined masks).
+    Option 2 recommended to ensure proper particle boundary refinement before border check.
+
+- question: What is the expected particle size distribution in gold_standard images?
+  context: |
+    Validation threshold area_range_pixels=[50, 10000] spans 200x range. Unknown if distribution is uniform or
+    skewed toward small/large particles. Impacts validation filter effectiveness and potential false positive rate.
+    Manual particle counting on 2 reference images (per acceptance criteria) should reveal distribution.
+
+- question: How should multi-component connected regions after opening be handled?
+  context: |
+    Morphological opening may split particles into multiple components. Should these be:
+    (a) Treated as separate particles (increases particle count, may violate >90% detection criterion),
+    (b) Re-merged using connected component labeling (complex, may reintroduce touching particles),
+    (c) Handled case-by-case with manual refinement (hybrid approach per PRD)?
+    Need clarification on expected behavior.
+
+- question: What physical unit conversion should be applied to area (μm²)?
+  context: |
+    PRD specifies 0.08431 μm/px scale for linear measurements (perimeter, diameter). For area, conversion requires
+    squaring the scale factor: area_um2 = area_px * (0.08431)². Need confirmation this is the intended calculation.
+
+gaps:
+- area: No existing Python codebase
+  description: |
+    Repository contains only PRD and gold_standard images. No preprocessing module, morphology module, or any
+    implementation code exists. Entire pipeline must be built from scratch.
+  impact: |
+    Complete greenfield implementation required. Research provides architectural guidance and library recommendations
+    but no reference implementation to adapt. Increases development effort and testing complexity.
+
+- area: MobileSAM integration patterns not documented
+  description: |
+    Research covers MobileSAM basic usage (SamPredictor, SamAutomaticMaskGenerator) but not hybrid automatic + manual
+    refinement workflow, VRAM optimization strategies, or sequential processing with GPU cleanup between images.
+  impact: |
+    Segmentation module implementation will require additional research into MobileSAM advanced features and
+    GPU memory management patterns. May impact preprocessing module design if segmentation output format differs
+    from expectations.
+
+- area: Actual gold_standard image properties unknown
+  description: |
+    Research identified 6 .tif files but did not inspect image dimensions, actual bit depth, presence of brightness
+    gradients, particle density, or crack visibility. These properties impact CLAHE parameter tuning and morphology
+    kernel sizing.
+  impact: |
+    Preprocessing and morphology parameter selection will require exploratory data analysis (EDA) phase. Cannot
+    finalize implementation until image characteristics are analyzed. Recommend initial EDA to measure image
+    statistics (histogram, gradient magnitude, particle count estimate).
+
+- area: Validation threshold justification not provided
+  description: |
+    PRD specifies area_range_pixels=[50, 10000] and aspect_ratio_range=[0.25, 4.0] but does not explain how these
+    thresholds were determined. Unknown if based on domain knowledge, pilot study, or arbitrary selection.
+  impact: |
+    Without threshold justification, cannot assess if values are appropriate for NMC811 cathode particles. May need
+    iterative refinement after initial pipeline runs. Risk of over-filtering (missing valid particles) or
+    under-filtering (including noise/artifacts).
+
+- area: Performance benchmarking baseline missing
+  description: |
+    PRD requires <30 minutes for 6 images on RTX 4060 but does not provide timing breakdown (preprocessing, segmentation,
+    morphology, metrics). Unknown which stage is bottleneck.
+  impact: |
+    Optimization efforts may target wrong pipeline stage. Recommend profiling each module (preprocessing ~1-2 min,
+    segmentation ~20-25 min, morphology ~1-2 min, metrics <1 min per image) to identify bottlenecks and guide
+    optimization priorities.
+
+- area: Error recovery strategies undefined
+  description: |
+    PRD defines error codes (ERR_VRAM_001, ERR_MASK_002, ERR_IO_003, ERR_METRIC_004) but not recovery actions.
+    Unknown if pipeline should halt on error, skip problematic image, or retry with adjusted parameters.
+  impact: |
+    Batch processing of 6 images may fail completely if single image encounters error. Recommend implementing
+    per-image error handling with logging and optional skip/continue behavior for robustness.

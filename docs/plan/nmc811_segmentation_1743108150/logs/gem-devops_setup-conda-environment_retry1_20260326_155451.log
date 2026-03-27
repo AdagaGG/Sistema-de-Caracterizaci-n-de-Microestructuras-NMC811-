@@ -1,0 +1,13 @@
+[2026-03-26T15:54:51] Retry 1/3 started.
+[2026-03-26T15:54:51] No local Miniconda installer found in project/docs temp paths.
+[2026-03-26T15:54:51] Attempting non-interactive winget install for Miniconda3.
+[2026-03-26T15:56:24] winget exit code: 0
+[2026-03-26T15:56:24] Conda discovered after winget/choco attempt: C:\Users\adria\miniconda3\Scripts\conda.exe
+[2026-03-26T15:56:24] Environment name resolved: nmc811-segmentation
+[2026-03-26T15:56:26] Environment does not exist. Creating environment from file.
+[2026-03-26T15:56:28] 
+[2026-03-26T15:56:28] Running environment verification checks.
+[2026-03-26T15:56:30] python --version => EnvironmentLocationNotFound: Not a conda environment: C:\Users\adria\miniconda3\envs\nmc811-segmentation
+[2026-03-26T15:56:31] torch.cuda.is_available() => EnvironmentLocationNotFound: Not a conda environment: C:\Users\adria\miniconda3\envs\nmc811-segmentation
+[2026-03-26T15:56:32] imports => EnvironmentLocationNotFound: Not a conda environment: C:\Users\adria\miniconda3\envs\nmc811-segmentation
+[2026-03-26T15:56:33] Resource snapshot C: used=464.7GB free=10.67GB

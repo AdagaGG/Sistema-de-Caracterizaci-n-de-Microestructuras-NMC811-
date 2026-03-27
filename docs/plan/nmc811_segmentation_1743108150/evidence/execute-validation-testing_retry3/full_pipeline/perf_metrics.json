@@ -1,0 +1,7 @@
+{
+  "pipeline_exit_code": 1,
+  "pipeline_elapsed_seconds": 363.774,
+  "peak_vram_mb": 3939,
+  "peak_vram_gb": 3.847,
+  "command": "C:\\Users\\adria\\miniconda3\\Scripts\\conda.exe run -n nmc811-segmentation python -m src.main --input-dir gold_standard --output-dir docs\\plan\\nmc811_segmentation_1743108150\\evidence\\execute-validation-testing_retry3\\full_pipeline --checkpoint-path weights/mobile_sam.pt --device cuda:0 --no-progress --log-file docs\\\\plan\\\\nmc811_segmentation_1743108150\\\\evidence\\\\execute-validation-testing_retry3\\\\full_pipeline\\\\runtime_execution.jsonl"
+}

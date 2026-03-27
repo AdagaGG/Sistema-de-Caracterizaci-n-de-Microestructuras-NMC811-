@@ -1,0 +1,38 @@
+{
+  "clipped_count": 0,
+  "colormap": {
+    "endpoints": {
+      "fractured_low_hex": "#D73027",
+      "intact_high_hex": "#1A9850",
+      "neutral_mid_hex": "#FEE08B"
+    },
+    "interpolation": "linear_rgb",
+    "lut_name": "circularity_red_to_green_v1"
+  },
+  "image_stem": "img_RDBS_0485",
+  "invalid_metric_count": 0,
+  "normalization": {
+    "domain": [
+      0.0,
+      1.0
+    ],
+    "formula": "norm = clip((circularity - 0.0) / (1.0 - 0.0), 0.0, 1.0)",
+    "strategy": "fixed_domain"
+  },
+  "overlay": {
+    "alpha": 0.45,
+    "boundary_color_hex": "#FFFFFF",
+    "boundary_thickness_px": 1,
+    "draw_order": "fill first, boundary second"
+  },
+  "rejected_particles": 0,
+  "rejected_style": {
+    "fill_bgr": [
+      128,
+      128,
+      128
+    ],
+    "fill_hex": "#808080"
+  },
+  "valid_particles": 0
+}

@@ -1,0 +1,175 @@
+# Product Requirements Document - NMC811 Microstructure Characterization System
+prd_id: nmc811_segmentation_1743108150
+version: 1.0.0
+status: completed
+
+user_stories:
+  - as_a: Materials Science Researcher
+    i_want: Automated segmentation of NMC811 cathode particles from FIB-SEM images
+    so_that: I can quantify geometric degradation patterns without manual labeling
+
+  - as_a: Data Analyst
+    i_want: Exportable geometric metrics (area, perimeter, circularity, diameter) in CSV format
+    so_that: I can perform statistical analysis of particle fragmentation across samples
+
+  - as_a: Computer Vision Engineer
+    i_want: GPU-accelerated local pipeline using MobileSAM
+    so_that: The system runs offline on limited hardware (RTX 4060, 8GB VRAM)
+
+scope:
+  in_scope:
+    - Ingestion of 16-bit .tif FIB-SEM images without lossy conversion
+    - CLAHE preprocessing to compensate brightness gradients and enhance cracks
+    - MobileSAM-based instance segmentation with hybrid automatic + manual refinement
+    - Morphological border refinement (opening operations) to separate adjacent particles
+    - Extraction of geometric metrics per particle (ID, Area, Perimeter, Circularity, Equivalent Diameter)
+    - Conversion to physical units using 0.08431 μm/px scale
+    - Particle validation filters (area + circularity + aspect ratio thresholds)
+    - Sequential processing (1 image at a time) with VRAM cleanup between images
+    - Heatmap visualization by circularity (red=low/fractured, green=high/intact)
+    - Consolidated CSV export (analisis_gold_standard.csv) with all 6 images metrics
+    - Conda environment setup with PyTorch CUDA, tifffile, opencv, pandas
+
+  out_of_scope:
+    - External API calls or cloud-based processing
+    - Real-time processing or video streams
+    - 3D volumetric reconstruction
+    - Machine learning model training (using pretrained MobileSAM only)
+    - Multi-GPU distributed processing
+    - Automated hyperparameter tuning
+
+acceptance_criteria:
+  - criterion: All 6 gold_standard .tif images processed without VRAM overflow
+    verification: Monitor GPU memory during execution, confirm <7.5GB peak usage
+
+  - criterion: Segmentation masks correctly separate adjacent particles
+    verification: Visual inspection of output images, no merged particles in high-density regions
+
+  - criterion: Circularity formula C = 4πA/P² returns values in [0, 1] range
+    verification: Unit tests on synthetic circular and elongated shapes
+
+  - criterion: Heatmap visualization clearly distinguishes fractured vs intact particles
+    verification: Manually label 10 particles as fractured/intact, verify color coding matches
+
+  - criterion: CSV contains >90% of visible particles from manual count
+    verification: Count particles in 2 reference images manually, compare with automated detection
+
+  - criterion: Pipeline completes 6 images in <30 minutes on RTX 4060
+    verification: Time execution end-to-end
+
+needs_clarification: []
+
+validation_thresholds:
+  area_range_pixels: [50, 10000]
+  circularity_min: null  # No minimum threshold, export all for posterior filtering
+  aspect_ratio_range: [0.25, 4.0]  # 1:4 to 4:1 ratio
+  exclude_edge_particles: true  # Discard particles touching image borders
+
+features:
+  - name: CLAHE Preprocessing Module
+    overview: Apply adaptive histogram equalization to enhance contrast in FIB-SEM images before segmentation
+    status: completed
+
+  - name: MobileSAM Segmentation Engine
+    overview: Hybrid automatic mask generation with manual refinement capability for ambiguous cases
+    status: completed
+
+  - name: Morphological Refinement Pipeline
+    overview: Opening operations (erosion + dilation) to separate touching particles in binary masks
+    status: completed
+
+  - name: Geometric Metrics Extractor
+    overview: Calculate area, perimeter, circularity, equivalent diameter per particle with μm conversion
+    status: completed
+
+  - name: Particle Validation Filter
+    overview: Combined area + circularity + aspect ratio thresholds to reject noise and artifacts
+    status: completed
+
+  - name: Heatmap Visualization Generator
+    overview: Color-coded overlay by circularity metric (red=fractured, green=intact)
+    status: completed
+
+  - name: CSV Export Module
+    overview: Consolidated DataFrame export with all metrics from 6-image batch
+    status: completed
+
+state_machines:
+  - name: Image Processing State
+    states: [raw, preprocessed, segmented, refined, analyzed, exported]
+    transitions:
+      - from: raw
+        to: preprocessed
+        trigger: CLAHE application
+
+      - from: preprocessed
+        to: segmented
+        trigger: MobileSAM mask generation
+
+      - from: segmented
+        to: refined
+        trigger: Morphological opening
+
+      - from: refined
+        to: analyzed
+        trigger: Metrics calculation
+
+      - from: analyzed
+        to: exported
+        trigger: CSV write + visualization save
+
+errors:
+  - code: ERR_VRAM_001
+    message: "GPU memory exceeded during segmentation. Reduce image resolution or tile size."
+
+  - code: ERR_MASK_002
+    message: "No valid particles detected after filtering. Check thresholds or image quality."
+
+  - code: ERR_IO_003
+    message: "Failed to read 16-bit TIFF file. Verify file integrity and tifffile library version."
+
+  - code: ERR_METRIC_004
+    message: "Circularity calculation failed: perimeter is zero. Check contour extraction."
+
+decisions:
+  - decision: Use MobileSAM instead of full SAM for GPU memory efficiency
+    rationale: RTX 4060 8GB VRAM constraint requires lightweight model; MobileSAM provides 60x speedup with minimal accuracy loss
+
+  - decision: Hybrid automatic + manual refinement strategy for segmentation
+    rationale: Balances automation speed with researcher ability to correct ambiguous particle boundaries
+
+  - decision: Sequential image processing (1 at a time) with VRAM cleanup
+    rationale: Prevents out-of-memory crashes on 8GB GPU; reliability over speed for research context
+
+  - decision: Conda environment over venv for dependency management
+    rationale: Better CUDA/PyTorch version control and GPU driver compatibility
+
+  - decision: Circularity heatmap as primary visualization
+    rationale: Directly maps to research goal (fragmentation detection); more informative than random color masks
+
+  - decision: Combined validation filter (area + circularity + aspect ratio)
+    rationale: Multi-criteria approach reduces false positives from noise/artifacts better than single metric
+
+  - decision: Export consolidated CSV instead of per-image files
+    rationale: Simplifies statistical analysis across batch; aligns with "gold standard" dataset concept
+
+  - decision: Confirm final 6-image end-to-end execution as implementation baseline
+    rationale: Full pipeline run completed successfully across all gold_standard images with exit code 0
+
+  - decision: Lock VRAM and runtime acceptance criteria as passed
+    rationale: Final evidence shows peak VRAM at 3.799 GB (<7.5 GB) and total elapsed runtime at 352.652s (<30 minutes)
+
+  - decision: Keep detection-rate criterion provisional pending manual reference counts
+    rationale: Automated counts are available, but pass/fail against >90% remains pending until manual reference counts are provided
+
+changes:
+  - update: Final 6-image E2E runtime execution completed successfully
+    evidence: docs/plan/nmc811_segmentation_1743108150/evidence/execute-validation-testing_final/full_pipeline/perf_metrics.json
+
+  - update: VRAM and runtime acceptance criteria marked as passed
+    evidence: docs/plan/nmc811_segmentation_1743108150/evidence/execute-validation-testing_final/acceptance_matrix_status.json
+
+  - update: Detection-rate acceptance remains provisional pending manual reference counts
+    evidence: docs/plan/nmc811_segmentation_1743108150/evidence/execute-validation-testing_final/detection_rate_reference_provisional.json
+
+

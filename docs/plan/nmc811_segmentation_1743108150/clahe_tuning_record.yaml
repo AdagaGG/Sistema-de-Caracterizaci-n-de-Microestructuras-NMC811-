@@ -1,0 +1,172 @@
+search_space:
+  clip_limits:
+  - 1.5
+  - 2.0
+  - 2.5
+  - 3.0
+  tile_grid_sizes:
+  - - 6
+    - 6
+  - - 8
+    - 8
+  - - 10
+    - 10
+  representative_count: 4
+representative_images:
+- img_RDBS_0050.tif
+- img_RDBS_0100.tif
+- img_RDBS_0300.tif
+- img_RDBS_0485.tif
+selected_parameters:
+  clip_limit: 3.0
+  tile_grid_size:
+  - 10
+  - 10
+  robust_score: 0.234968
+selection_rationale: Selected the highest robust_score (mean quality penalized by
+  cross-image variability) across representative samples.
+evaluated_combinations:
+- clip_limit: 3.0
+  tile_grid_size:
+  - 10
+  - 10
+  mean_score: 0.238824
+  std_score: 0.011015
+  robust_score: 0.234968
+  per_image_scores:
+  - 0.250607
+  - 0.248529
+  - 0.231356
+  - 0.224804
+- clip_limit: 3.0
+  tile_grid_size:
+  - 8
+  - 8
+  mean_score: 0.238589
+  std_score: 0.013806
+  robust_score: 0.233757
+  per_image_scores:
+  - 0.252908
+  - 0.251257
+  - 0.229149
+  - 0.221044
+- clip_limit: 3.0
+  tile_grid_size:
+  - 6
+  - 6
+  mean_score: 0.234027
+  std_score: 0.012
+  robust_score: 0.229827
+  per_image_scores:
+  - 0.247397
+  - 0.244204
+  - 0.225123
+  - 0.219385
+- clip_limit: 2.5
+  tile_grid_size:
+  - 10
+  - 10
+  mean_score: 0.220474
+  std_score: 0.005487
+  robust_score: 0.218553
+  per_image_scores:
+  - 0.22598
+  - 0.225817
+  - 0.216211
+  - 0.213887
+- clip_limit: 2.5
+  tile_grid_size:
+  - 8
+  - 8
+  mean_score: 0.220604
+  std_score: 0.008544
+  robust_score: 0.217614
+  per_image_scores:
+  - 0.228958
+  - 0.229217
+  - 0.213556
+  - 0.210686
+- clip_limit: 2.5
+  tile_grid_size:
+  - 6
+  - 6
+  mean_score: 0.217265
+  std_score: 0.006852
+  robust_score: 0.214866
+  per_image_scores:
+  - 0.224599
+  - 0.223586
+  - 0.211079
+  - 0.209795
+- clip_limit: 2.0
+  tile_grid_size:
+  - 10
+  - 10
+  mean_score: 0.203014
+  std_score: 0.000704
+  robust_score: 0.202767
+  per_image_scores:
+  - 0.2027
+  - 0.20423
+  - 0.202569
+  - 0.202557
+- clip_limit: 2.0
+  tile_grid_size:
+  - 8
+  - 8
+  mean_score: 0.203067
+  std_score: 0.003244
+  robust_score: 0.201931
+  per_image_scores:
+  - 0.205181
+  - 0.207262
+  - 0.199651
+  - 0.200173
+- clip_limit: 2.0
+  tile_grid_size:
+  - 6
+  - 6
+  mean_score: 0.201149
+  std_score: 0.00191
+  robust_score: 0.200481
+  per_image_scores:
+  - 0.202634
+  - 0.203297
+  - 0.198567
+  - 0.200099
+- clip_limit: 1.5
+  tile_grid_size:
+  - 8
+  - 8
+  mean_score: 0.186007
+  std_score: 0.003014
+  robust_score: 0.184952
+  per_image_scores:
+  - 0.181354
+  - 0.185897
+  - 0.1871
+  - 0.189678
+- clip_limit: 1.5
+  tile_grid_size:
+  - 10
+  - 10
+  mean_score: 0.186014
+  std_score: 0.004627
+  robust_score: 0.184394
+  per_image_scores:
+  - 0.179596
+  - 0.183633
+  - 0.190221
+  - 0.190605
+- clip_limit: 1.5
+  tile_grid_size:
+  - 6
+  - 6
+  mean_score: 0.185254
+  std_score: 0.003474
+  robust_score: 0.184038
+  per_image_scores:
+  - 0.180402
+  - 0.183723
+  - 0.187437
+  - 0.189452

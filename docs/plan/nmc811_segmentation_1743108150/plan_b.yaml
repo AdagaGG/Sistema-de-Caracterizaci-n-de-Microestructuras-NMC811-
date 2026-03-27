@@ -1,0 +1,995 @@
+plan_id: nmc811_segmentation_1743108150
+objective: Develop a modular Computer Vision pipeline using MobileSAM and Python to automatically segment active material particles in 16-bit FIB-SEM .tif images, generating exportable geometric datasets to Excel for deep statistical analysis of cathode degradation
+created_at: "2025-01-26T00:00:00Z"
+created_by: gem-planner
+status: pending_approval
+research_confidence: high
+
+plan_metrics:
+  wave_1_task_count: 3
+  total_dependencies: 11
+  risk_score: medium
+
+tldr: |
+  Variant B emphasizes parallel early-stage execution with 3 independent wave-1 tasks (conda setup, preprocessing research, visualization design).
+  Sequential processing architecture ensures VRAM safety (<7.5GB) by processing one image at a time with explicit cleanup.
+  Hybrid prompting strategy (automatic + manual refinement) balances automation with researcher control for ambiguous particles.
+  Combined validation filter (area + aspect ratio + edge exclusion) reduces false positives from noise/artifacts.
+  Consolidated CSV export with circularity-based heatmap visualization enables rapid degradation pattern analysis.
+  Risk mitigation: VRAM monitoring, parameter tuning tasks, comprehensive testing, and GPU fallback strategies.
+
+open_questions:
+  - Optimal CLAHE parameters (clip_limit, tile_grid_size) for FIB-SEM images require empirical tuning on gold_standard dataset
+  - Structuring element shape/size for morphological opening needs validation (elliptical 3x3 vs 5x5 vs 7x7)
+  - MobileSAM grid sampling density tradeoff between accuracy and <30min performance target
+  - Manual refinement prompt storage strategy for reproducibility across research iterations
+
+pre_mortem:
+  overall_risk_level: medium
+  critical_failure_modes:
+    - scenario: VRAM overflow crashes during MobileSAM inference despite sequential processing
+      likelihood: medium
+      impact: high
+      mitigation: Implement aggressive GPU memory profiling in wave 2, add batch size reduction fallback, include torch.cuda.empty_cache() after each image, monitor peak VRAM with nvidia-smi logging
+
+    - scenario: Morphological opening over-erodes small particles or fails to separate touching large particles
+      likelihood: medium
+      impact: high
+      mitigation: Create parameter tuning task in wave 3 with visual validation on representative samples, implement configurable kernel size/shape, test range of structuring elements (3x3 to 7x7 elliptical)
+
+    - scenario: Segmentation quality degrades on low-contrast or highly fractured particles leading to <90% detection rate
+      likelihood: medium
+      impact: critical
+      mitigation: Allocate wave 2 task for CLAHE parameter optimization, implement quality metrics (IoU, Dice) for validation, design manual refinement workflow with clear UI prompts
+
+    - scenario: Pipeline exceeds 30-minute performance target due to MobileSAM inference bottleneck
+      likelihood: low
+      impact: medium
+      mitigation: Use bfloat16 mixed precision by default, profile inference times per image in wave 4, implement early warning if 5 images exceed 25 minutes, document optimization options (reduce grid density, skip manual refinement)
+
+    - scenario: Edge particle exclusion removes too many valid samples reducing statistical power
+      likelihood: low
+      impact: medium
+      mitigation: Generate exclusion statistics during validation task, implement configurable border buffer (0-10px), document tradeoff between sample size and measurement bias
+
+  assumptions:
+    - RTX 4060 GPU with 8GB VRAM is available and properly configured with CUDA 12.x drivers
+    - Gold standard images (6x 16-bit TIFFs at ~3072x1024 resolution) are representative of target dataset
+    - Pretrained MobileSAM checkpoint can be downloaded and stored locally without network restrictions
+    - Researcher is available for manual refinement prompts during hybrid segmentation mode
+    - Statistical analysis will be performed externally in Excel/R after CSV export
+    - No concurrent GPU workloads will interfere with VRAM allocation during pipeline execution
+    - Python 3.10+ conda environment can be created with write permissions to project directory
+    - 16-bit TIFF bit depth is essential for segmentation quality (no 8-bit downsampling acceptable)
+
+implementation_specification:
+  code_structure: |
+    Modular pipeline organized into 6 primary modules plus configuration/utilities:
+    
+    src/
+      config/
+        params.yaml                # Centralized CLAHE, morphology, validation thresholds
+        mobilesam_config.yaml      # Model checkpoint path, grid density, IoU thresholds
+      preprocessing/
+        tiff_loader.py             # 16-bit TIFF loading with tifffile.imread()
+        clahe_enhancer.py          # Adaptive histogram equalization with tunable parameters
+      segmentation/
+        mobilesam_wrapper.py       # Model initialization, VRAM management, inference loop
+        mask_generator.py          # Automatic grid-based mask generation
+        manual_refiner.py          # Point/box prompt interface for ambiguous particles
+      postprocessing/
+        morphology_ops.py          # Opening operations to separate particles
+        edge_handler.py            # Border particle detection and exclusion
+      metrics/
+        geometry_extractor.py      # Area, perimeter, circularity, diameter calculation
+        validation_filter.py       # Multi-criteria filtering (area + aspect ratio + edge)
+      visualization/
+        heatmap_generator.py       # Circularity-based color mapping (red=fractured, green=intact)
+        overlay_renderer.py        # Mask overlay on original images
+      export/
+        csv_exporter.py            # Consolidated DataFrame export to analisis_gold_standard.csv
+      utils/
+        gpu_monitor.py             # VRAM profiling, torch.cuda.empty_cache() wrapper
+        logger.py                  # Structured logging for debugging
+      main.py                      # Orchestrator script for end-to-end pipeline
+
+  affected_areas:
+    - Gold standard image directory (read-only access to 6 .tif files)
+    - Output directories for masks, visualizations, and CSV export (write access required)
+    - Conda environment configuration (new environment creation)
+    - GPU VRAM (managed by PyTorch, requires CUDA 12.x drivers)
+    - Configuration files (YAML-based parameter storage)
+
+  component_details:
+    - component: TIFF Loader
+      responsibility: Load 16-bit FIB-SEM images preserving bit depth without lossy conversion, handle potential file I/O errors, validate image dimensions and dtype
+      interfaces:
+        - load_image(filepath: str) -> np.ndarray[uint16]
+        - validate_bit_depth(image: np.ndarray) -> bool
+
+    - component: CLAHE Enhancer
+      responsibility: Apply adaptive histogram equalization to compensate brightness gradients and enhance cracks, expose tunable clip_limit and tile_grid_size parameters
+      interfaces:
+        - enhance(image: np.ndarray[uint16], clip_limit: float, tile_grid_size: tuple) -> np.ndarray[uint8]
+        - optimize_parameters(image_set: list) -> dict
+
+    - component: MobileSAM Wrapper
+      responsibility: Initialize pretrained MobileSAM model, manage CUDA device placement, implement sequential inference with VRAM cleanup between images, expose automatic and manual prompting modes
+      interfaces:
+        - load_model(checkpoint_path: str, device: str) -> SAM2Model
+        - generate_masks_auto(image: np.ndarray) -> list[dict]
+        - refine_mask_manual(image: np.ndarray, prompts: list) -> dict
+        - cleanup_vram() -> None
+
+    - component: Morphology Operations
+      responsibility: Apply opening (erosion + dilation) to separate touching particles, support configurable structuring element shape and size
+      interfaces:
+        - apply_opening(mask: np.ndarray, kernel_shape: str, kernel_size: int) -> np.ndarray
+        - tune_kernel_parameters(mask_set: list) -> dict
+
+    - component: Geometry Extractor
+      responsibility: Calculate area, perimeter, circularity (C=4πA/P²), equivalent diameter, aspect ratio per particle from refined masks, convert to physical units (μm) using 0.08431 μm/px scale
+      interfaces:
+        - extract_metrics(mask: np.ndarray, scale_factor: float) -> pd.DataFrame
+        - calculate_circularity(area: float, perimeter: float) -> float
+
+    - component: Validation Filter
+      responsibility: Apply combined area thresholds [50-10000px], aspect ratio [0.25-4.0], edge particle exclusion, log rejection statistics
+      interfaces:
+        - filter_particles(df: pd.DataFrame, criteria: dict) -> pd.DataFrame
+        - exclude_edge_particles(mask: np.ndarray, border_buffer: int) -> np.ndarray
+        - generate_filter_stats(df_before: pd.DataFrame, df_after: pd.DataFrame) -> dict
+
+    - component: Heatmap Generator
+      responsibility: Generate circularity-based color-coded visualizations with red=low circularity (fractured) and green=high circularity (intact), overlay on original images
+      interfaces:
+        - create_heatmap(circularity_values: np.ndarray, colormap: str) -> np.ndarray
+        - overlay_on_image(heatmap: np.ndarray, original: np.ndarray, alpha: float) -> np.ndarray
+
+    - component: CSV Exporter
+      responsibility: Consolidate metrics from all 6 images into single DataFrame, export to analisis_gold_standard.csv with proper column names and formatting
+      interfaces:
+        - consolidate_batch(dataframes: list[pd.DataFrame]) -> pd.DataFrame
+        - export_csv(df: pd.DataFrame, output_path: str) -> None
+
+  dependencies:
+    - component: CLAHE Enhancer
+      relationship: depends on TIFF Loader for 16-bit input arrays
+
+    - component: MobileSAM Wrapper
+      relationship: depends on CLAHE Enhancer for preprocessed input images
+
+    - component: Morphology Operations
+      relationship: depends on MobileSAM Wrapper for binary segmentation masks
+
+    - component: Geometry Extractor
+      relationship: depends on Morphology Operations for refined particle masks
+
+    - component: Validation Filter
+      relationship: depends on Geometry Extractor for raw metric DataFrames
+
+    - component: Heatmap Generator
+      relationship: depends on Validation Filter for circularity values of valid particles
+
+    - component: CSV Exporter
+      relationship: depends on Validation Filter for cleaned metric DataFrames from all images
+
+  integration_points:
+    - Sequential image processing loop: main.py iterates through gold_standard/*.tif files, invoking each module in pipeline order
+    - GPU memory management: gpu_monitor.py integrates with MobileSAM Wrapper via torch.cuda.empty_cache() after each inference cycle
+    - Configuration system: All tunable parameters loaded from YAML files in src/config/ at runtime
+    - Logging: Structured logs written by logger.py to track preprocessing steps, VRAM usage, segmentation quality, and validation statistics
+    - Error handling: Try-catch blocks in main.py with fallback strategies for VRAM overflow, corrupted TIFF files, and zero-perimeter particles
+
+contracts:
+  - from_task: setup-conda-environment
+    to_task: integrate-mobilesam-model
+    interface: Functional conda environment with PyTorch 2.x, torchvision, CUDA 12.x support, tifffile, opencv-python, scikit-image, pandas installed
+    format: Conda environment accessible via 'conda activate nmc811_segmentation' with verified GPU availability (torch.cuda.is_available() == True)
+
+  - from_task: implement-preprocessing-pipeline
+    to_task: integrate-mobilesam-model
+    interface: Preprocessed image arrays in uint8 format suitable for MobileSAM input (H, W, C) with normalized intensity range [0-255]
+    format: NumPy ndarray with shape validation and dtype assertion
+
+  - from_task: integrate-mobilesam-model
+    to_task: implement-morphological-refinement
+    interface: Binary segmentation masks as NumPy boolean arrays (H, W) with one mask per detected particle
+    format: List of dict objects with keys 'segmentation' (binary mask), 'area' (pixel count), 'bbox' (x, y, w, h)
+
+  - from_task: implement-morphological-refinement
+    to_task: extract-geometric-metrics
+    interface: Refined binary masks with separated particles, labeled image array for regionprops
+    format: NumPy int32 labeled array where each connected component has unique integer ID (0=background)
+
+  - from_task: extract-geometric-metrics
+    to_task: implement-validation-filters
+    interface: Raw geometric metrics DataFrame with columns [particle_id, area_px, area_um2, perimeter_um, circularity, equivalent_diameter_um, aspect_ratio, image_source]
+    format: pandas DataFrame with numeric dtypes, NaN handling for degenerate cases (zero perimeter)
+
+  - from_task: implement-validation-filters
+    to_task: generate-heatmap-visualizations
+    interface: Filtered DataFrame containing only valid particles passing all criteria (area, aspect ratio, edge exclusion)
+    format: pandas DataFrame subset with validation_status flag and rejection_reason column
+
+  - from_task: implement-validation-filters
+    to_task: consolidate-csv-export
+    interface: Batch of filtered DataFrames (one per image) ready for concatenation
+    format: List of pandas DataFrames with consistent column schemas
+
+  - from_task: implement-preprocessing-pipeline
+    to_task: tune-clahe-parameters
+    interface: CLAHE enhancement function accepting clip_limit and tile_grid_size as tunable parameters
+    format: Callable function with signature enhance(image, clip_limit, tile_grid_size) -> enhanced_image
+
+  - from_task: implement-morphological-refinement
+    to_task: tune-morphology-parameters
+    interface: Morphological opening function with configurable kernel shape and size
+    format: Callable function with signature apply_opening(mask, kernel_shape, kernel_size) -> refined_mask
+
+tasks:
+  - id: setup-conda-environment
+    title: Create isolated conda environment with PyTorch CUDA and Computer Vision dependencies
+    description: |
+      Set up reproducible Python environment for GPU-accelerated Computer Vision pipeline.
+      Install PyTorch 2.x with CUDA 12.x support for RTX 4060 compatibility.
+      Include tifffile for 16-bit TIFF I/O, opencv-python for morphology/CLAHE, scikit-image for regionprops, pandas for CSV export.
+      Verify GPU availability with torch.cuda.is_available() and test VRAM allocation.
+      Create environment.yml for reproducibility across systems.
+      Document installation steps and troubleshooting for CUDA driver mismatches.
+    wave: 1
+    agent: gem-devops
+    priority: high
+    status: pending
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: Environment requirements specified in scope.in_scope (conda + PyTorch CUDA + dependencies)
+    estimated_effort: small
+    estimated_files: 2
+    estimated_lines: 150
+    focus_area: null
+    verification:
+      - Conda environment activates without errors
+      - torch.cuda.is_available() returns True
+      - Import tests pass for all required libraries (tifffile, cv2, skimage, pandas, numpy)
+      - GPU device name matches RTX 4060 in torch.cuda.get_device_name()
+    acceptance_criteria:
+      - Environment YAML file includes all dependencies with pinned versions
+      - Documentation includes CUDA troubleshooting steps
+      - GPU memory test allocates and frees 1GB tensor successfully
+    failure_modes:
+      - scenario: CUDA version mismatch between PyTorch and GPU drivers
+        likelihood: medium
+        impact: high
+        mitigation: Use conda search to find compatible PyTorch build for CUDA 12.1/12.4, document nvidia-smi output in environment.yml comments
+    tech_stack:
+      - Conda package manager
+      - PyTorch 2.x
+      - CUDA 12.x
+      - tifffile 2024.x
+      - opencv-python 4.x
+      - scikit-image 0.24.x
+      - pandas 2.x
+    test_coverage: Unit test for GPU availability and VRAM allocation
+    requires_review: false
+    review_depth: null
+    review_security_sensitive: false
+    environment: development
+    requires_approval: false
+    devops_security_sensitive: false
+
+  - id: implement-preprocessing-pipeline
+    title: Build 16-bit TIFF loader and CLAHE preprocessing module
+    description: |
+      Create modular preprocessing pipeline preserving 16-bit image fidelity before segmentation.
+      Implement tiff_loader.py: Use tifffile.imread() to load 16-bit .tif files without lossy conversion, validate dtype and dimensions.
+      Implement clahe_enhancer.py: Apply adaptive histogram equalization to compensate brightness gradients and enhance cracks.
+      Expose tunable parameters (clip_limit, tile_grid_size) for empirical optimization in later tuning task.
+      Convert 16-bit to 8-bit only after CLAHE for MobileSAM compatibility (normalize to [0-255] range).
+      Handle edge cases: corrupted files, non-16-bit inputs, extreme intensity distributions.
+      Add structured logging for preprocessing steps and parameter values.
+    wave: 1
+    agent: gem-implementer
+    priority: high
+    status: pending
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: Preprocessing requirements in scope.in_scope (16-bit TIFF ingestion, CLAHE preprocessing)
+      - path: docs/plan/nmc811_segmentation_1743108150/research_findings_Image Preprocessing & Morphological Operations.yaml
+        description: CLAHE best practices and 16-bit TIFF handling patterns
+      - path: gold_standard/
+        description: Target 16-bit TIFF images for testing (6 files)
+    estimated_effort: small
+    estimated_files: 3
+    estimated_lines: 250
+    focus_area: null
+    verification:
+      - Load all 6 gold_standard .tif files without errors
+      - Output arrays have dtype uint8 with range [0-255] after CLAHE
+      - Visual inspection confirms contrast enhancement on sample image
+      - No lossy conversion before CLAHE (intermediate arrays remain uint16)
+    acceptance_criteria:
+      - TIFF loader validates bit depth and raises exception for non-16-bit inputs
+      - CLAHE parameters are configurable via function arguments
+      - Preprocessing runs in <10 seconds per image on CPU
+    failure_modes:
+      - scenario: CLAHE over-enhancement creates artificial contrast artifacts
+        likelihood: medium
+        impact: medium
+        mitigation: Implement parameter validation (clip_limit range [1-100], tile_grid_size min 2x2), add comparison visualization with original
+    tech_stack:
+      - tifffile
+      - OpenCV (cv2.createCLAHE)
+      - NumPy
+    test_coverage: Unit tests for TIFF loading, CLAHE parameter validation, dtype conversion correctness
+    requires_review: false
+    review_depth: null
+    review_security_sensitive: false
+
+  - id: design-visualization-system
+    title: Design circularity-based heatmap visualization with color-coding schema
+    description: |
+      Define visualization strategy for circularity-based degradation assessment.
+      Design color mapping: red=low circularity (fractured particles), green=high circularity (intact particles).
+      Create custom colormap or use cv2.COLORMAP_JET with normalized circularity values [0-1].
+      Specify overlay alpha blending for mask visualization on original images.
+      Document visualization pipeline: circularity values → normalized array → color mapping → overlay on original.
+      Design output file naming convention: {image_name}_heatmap_circularity.png.
+      Define quality criteria for visual validation (manually labeled fractured particles should appear red).
+      Prepare mockup/example visualization for review before implementation.
+    wave: 1
+    agent: gem-planner
+    priority: medium
+    status: pending
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: Heatmap requirements in scope.in_scope (red=low circularity/fracture, green=high circularity)
+      - path: docs/plan/nmc811_segmentation_1743108150/research_findings_Geometric Metrics Extraction & Validation Filters.yaml
+        description: Heatmap visualization patterns with cv2.applyColorMap
+    estimated_effort: small
+    estimated_files: 1
+    estimated_lines: 100
+    focus_area: null
+    verification:
+      - Visualization design document approved by reviewer
+      - Color mapping clearly distinguishes fractured vs intact particles
+      - Alpha blending preserves original image features
+    acceptance_criteria:
+      - Design document specifies colormap, normalization strategy, overlay method
+      - Example visualization matches expected color coding (manually labeled samples)
+      - Output file naming convention follows project standards
+    failure_modes:
+      - scenario: Color mapping ambiguous for mid-range circularity values
+        likelihood: low
+        impact: low
+        mitigation: Use diverging colormap with distinct red-green endpoints, avoid yellow/orange confusion zone
+    requires_review: true
+    review_depth: lightweight
+    review_security_sensitive: false
+
+  - id: integrate-mobilesam-model
+    title: Integrate pretrained MobileSAM with hybrid automatic + manual prompting
+    description: |
+      Implement MobileSAM wrapper for instance segmentation with VRAM management.
+      Download and store pretrained MobileSAM checkpoint (document source URL and SHA256).
+      Implement mobilesam_wrapper.py: Load model to CUDA device, enable bfloat16 mixed precision for memory efficiency.
+      Implement mask_generator.py: Use SAM2AutomaticMaskGenerator with configurable grid density, IoU thresholds, stability scores.
+      Implement manual_refiner.py: Accept point/box prompts for ambiguous particle boundaries (optional interactive mode).
+      Integrate torch.cuda.empty_cache() after each image to prevent VRAM accumulation.
+      Add VRAM profiling with torch.cuda.max_memory_allocated() logging after each inference.
+      Design sequential processing loop: load image → preprocess → inference → cleanup → next image.
+      Handle inference errors: OOM fallback, corrupted mask detection, timeout for hanging inference.
+    wave: 2
+    agent: gem-implementer
+    priority: high
+    status: pending
+    dependencies:
+      - setup-conda-environment
+      - implement-preprocessing-pipeline
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: MobileSAM requirements in scope.in_scope (hybrid automatic + manual refinement, sequential processing with VRAM cleanup)
+      - path: docs/plan/nmc811_segmentation_1743108150/research_findings_mobilesam_gpu_optimization.yaml
+        description: MobileSAM integration patterns, GPU memory management, hybrid prompting strategy
+    estimated_effort: large
+    estimated_files: 3
+    estimated_lines: 450
+    focus_area: null
+    verification:
+      - Model loads successfully with checkpoint verification
+      - Automatic mask generation produces masks for all visible particles in test image
+      - Peak VRAM usage stays below 7.5GB during inference on 3072x1024 image
+      - Manual refinement interface accepts point prompts and updates masks
+    acceptance_criteria:
+      - Sequential processing completes 6 images without VRAM overflow
+      - Automatic mode generates >90% of particles detected in manual count
+      - Manual refinement workflow documented with example prompts
+      - VRAM profiling logs include peak usage per image
+    failure_modes:
+      - scenario: VRAM overflow despite sequential processing and cleanup
+        likelihood: medium
+        impact: high
+        mitigation: Reduce grid density or tile large images into 1024x1024 patches, add emergency CPU fallback mode
+      - scenario: Automatic mask generation misses small or low-contrast particles
+        likelihood: medium
+        impact: high
+        mitigation: Tune IoU and stability score thresholds empirically, document parameter tradeoffs, implement quality metrics (detection rate)
+    tech_stack:
+      - PyTorch
+      - SAM2 API
+      - MobileSAM checkpoint
+    test_coverage: Unit tests for model loading, VRAM cleanup verification, mask generation on synthetic images
+    requires_review: true
+    review_depth: standard
+    review_security_sensitive: false
+
+  - id: implement-morphological-refinement
+    title: Build morphological opening pipeline to separate touching particles
+    description: |
+      Implement post-segmentation morphological refinement to separate adjacent particles.
+      Create morphology_ops.py: Apply opening (erosion + dilation) with configurable structuring element (shape, size).
+      Support elliptical, rectangular, and cross-shaped kernels with sizes 3x3, 5x5, 7x7.
+      Handle edge case: over-erosion of small particles vs under-separation of large touching particles.
+      Integrate edge_handler.py: Detect and exclude particles touching image borders using scikit-image clear_border or manual masking.
+      Add optional border buffer (0-10px) for configurable exclusion strictness.
+      Log morphological parameter values and exclusion statistics (particles removed by border contact).
+      Design pipeline: binary mask → opening → connected component labeling → edge exclusion → refined labeled mask.
+    wave: 2
+    agent: gem-implementer
+    priority: high
+    status: pending
+    dependencies:
+      - integrate-mobilesam-model
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: Morphological refinement in scope.in_scope (opening operations to separate adjacent particles, exclude edge particles)
+      - path: docs/plan/nmc811_segmentation_1743108150/research_findings_Image Preprocessing & Morphological Operations.yaml
+        description: Morphological operations patterns, edge particle exclusion methods
+    estimated_effort: medium
+    estimated_files: 2
+    estimated_lines: 300
+    focus_area: null
+    verification:
+      - Opening successfully separates visually touching particles in test image
+      - Edge particle exclusion removes particles within 5px of border
+      - Connected component labeling produces unique IDs for each particle
+      - No over-erosion of valid small particles (>50px area threshold)
+    acceptance_criteria:
+      - Morphological parameters configurable via function arguments
+      - Edge exclusion statistics logged (count and percentage of removed particles)
+      - Visual validation confirms separation of high-density particle clusters
+    failure_modes:
+      - scenario: Opening over-erodes small particles below 50px area threshold
+        likelihood: medium
+        impact: high
+        mitigation: Test range of kernel sizes on representative samples, implement area-based re-inclusion for borderline cases, document tradeoff in parameter tuning task
+    tech_stack:
+      - OpenCV (cv2.morphologyEx, cv2.getStructuringElement)
+      - scikit-image (skimage.segmentation.clear_border)
+      - NumPy
+    test_coverage: Unit tests for opening with different kernels, edge exclusion on synthetic border-touching masks
+    requires_review: false
+    review_depth: null
+    review_security_sensitive: false
+
+  - id: extract-geometric-metrics
+    title: Extract area, perimeter, circularity, diameter, aspect ratio per particle
+    description: |
+      Implement geometric metrics extraction from refined labeled masks.
+      Create geometry_extractor.py: Use scikit-image regionprops for comprehensive property calculation.
+      Extract metrics per particle: area (px and μm²), perimeter (μm), circularity (C=4πA/P²), equivalent diameter (μm), aspect ratio (major/minor axis).
+      Convert pixel measurements to physical units using 0.08431 μm/px scale factor.
+      Handle degenerate cases: zero perimeter (log error, set circularity=NaN), single-pixel particles, extreme aspect ratios.
+      Structure output as pandas DataFrame with columns: [particle_id, area_px, area_um2, perimeter_um, circularity, equivalent_diameter_um, aspect_ratio, major_axis_um, minor_axis_um, image_source].
+      Add metadata columns: image filename, processing timestamp, parameter settings used.
+      Validate circularity range [0-1] for non-degenerate particles.
+    wave: 3
+    agent: gem-implementer
+    priority: high
+    status: pending
+    dependencies:
+      - implement-morphological-refinement
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: Geometric metrics requirements in scope.in_scope (area, perimeter, circularity, equivalent diameter, physical unit conversion)
+      - path: docs/plan/nmc811_segmentation_1743108150/research_findings_Geometric Metrics Extraction & Validation Filters.yaml
+        description: Regionprops-based metrics extraction patterns, circularity formula, unit conversion
+    estimated_effort: medium
+    estimated_files: 1
+    estimated_lines: 250
+    focus_area: null
+    verification:
+      - Synthetic circular mask produces circularity ≈ 1.0
+      - Synthetic elongated mask (1:4 ratio) produces circularity << 1.0
+      - Area conversion to μm² matches manual calculation for test particle
+      - DataFrame contains all required columns with correct dtypes
+    acceptance_criteria:
+      - Circularity formula C=4πA/P² implemented correctly with unit test validation
+      - Physical unit conversion factor 0.08431 μm/px applied consistently
+      - Degenerate cases handled gracefully (NaN circularity, logged warnings)
+      - Output DataFrame schema documented
+    failure_modes:
+      - scenario: Division-by-zero crashes for particles with perimeter=0
+        likelihood: low
+        impact: medium
+        mitigation: Add perimeter validation check before circularity calculation, set circularity=NaN for P<1e-6, log error with particle ID
+    tech_stack:
+      - scikit-image (skimage.measure.regionprops)
+      - pandas
+      - NumPy
+    test_coverage: Unit tests for circularity calculation on synthetic shapes, physical unit conversion validation, degenerate case handling
+    requires_review: false
+    review_depth: null
+    review_security_sensitive: false
+
+  - id: implement-validation-filters
+    title: Apply combined area + aspect ratio + edge exclusion validation filters
+    description: |
+      Implement multi-criteria particle validation to reject noise and artifacts.
+      Create validation_filter.py: Apply thresholds sequentially with logging of rejection statistics.
+      Filter criteria (from task_clarifications and PRD):
+        - Area range: [50, 10000] pixels (reject very small noise and large artifacts)
+        - Aspect ratio range: [0.25, 4.0] (1:4 to 4:1, reject extreme needles and filaments)
+        - Circularity: No minimum threshold (export all for posterior statistical filtering)
+        - Edge exclusion: Already handled in morphological refinement task
+      Implement filter_particles() function accepting DataFrame and criteria dict.
+      Log rejection statistics: count and percentage per criterion, distribution of rejected values.
+      Add validation_status flag and rejection_reason column to output DataFrame.
+      Support configurable thresholds for future parameter tuning.
+      Document tradeoff: strictness vs sample size for statistical power.
+    wave: 3
+    agent: gem-implementer
+    priority: medium
+    status: pending
+    dependencies:
+      - extract-geometric-metrics
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: Validation criteria in validation_thresholds (area, aspect ratio, edge exclusion)
+    estimated_effort: small
+    estimated_files: 1
+    estimated_lines: 200
+    focus_area: null
+    verification:
+      - Particles with area <50px or >10000px rejected
+      - Particles with aspect ratio <0.25 or >4.0 rejected
+      - Edge particles already excluded in morphological refinement
+      - Rejection statistics logged with counts and percentages
+    acceptance_criteria:
+      - Validation thresholds configurable via function arguments
+      - Filter statistics include distribution histograms for rejected values
+      - Output DataFrame contains validation_status and rejection_reason columns
+      - >90% of visually valid particles pass validation (acceptance criterion from PRD)
+    failure_modes:
+      - scenario: Over-filtering removes too many valid particles reducing statistical power
+        likelihood: low
+        impact: medium
+        mitigation: Log exclusion statistics prominently, implement configurable threshold ranges, document sensitivity analysis in testing task
+    tech_stack:
+      - pandas
+      - NumPy
+    test_coverage: Unit tests for threshold application, rejection statistics calculation, edge case handling
+    requires_review: false
+    review_depth: null
+    review_security_sensitive: false
+
+  - id: tune-clahe-parameters
+    title: Empirically tune CLAHE clip_limit and tile_grid_size for FIB-SEM images
+    description: |
+      Optimize CLAHE preprocessing parameters on gold_standard dataset for segmentation quality.
+      Test parameter ranges:
+        - clip_limit: [2.0, 10.0, 20.0, 40.0, 80.0] (default OpenCV is 40.0)
+        - tile_grid_size: [(4,4), (8,8), (16,16)] (default OpenCV is (8,8))
+      Evaluate parameter combinations on 2 representative images with varying contrast.
+      Quality metrics: visual inspection of crack enhancement, histogram spread, subjective segmentation quality.
+      Document optimal parameters in src/config/params.yaml with justification.
+      Generate comparison visualizations: original vs CLAHE outputs for different settings.
+      Iterate with manual review: adjust parameters based on researcher feedback on particle visibility.
+      Update preprocessing pipeline with tuned default values.
+    wave: 3
+    agent: gem-implementer
+    priority: medium
+    status: pending
+    dependencies:
+      - implement-preprocessing-pipeline
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/nmc811_segmentation_1743108150/research_findings_Image Preprocessing & Morphological Operations.yaml
+        description: CLAHE parameter tuning guidance, open questions about optimal settings
+    estimated_effort: small
+    estimated_files: 2
+    estimated_lines: 150
+    focus_area: null
+    verification:
+      - Parameter grid search completes on 2 test images
+      - Optimal parameters identified with visual comparison
+      - params.yaml updated with tuned values
+      - Comparison visualizations generated for review
+    acceptance_criteria:
+      - At least 10 parameter combinations tested
+      - Optimal settings improve crack visibility vs default parameters
+      - Tuned parameters documented with rationale in config file
+    failure_modes:
+      - scenario: No single parameter set works well for all images (heterogeneous contrast)
+        likelihood: medium
+        impact: low
+        mitigation: Implement per-image adaptive parameter selection or use conservative middle-ground settings
+    tech_stack:
+      - OpenCV
+      - NumPy
+      - Matplotlib (for comparison plots)
+    test_coverage: Visual validation with manual review
+    requires_review: true
+    review_depth: lightweight
+    review_security_sensitive: false
+
+  - id: tune-morphology-parameters
+    title: Validate morphological opening kernel shape and size for particle separation
+    description: |
+      Optimize morphological opening parameters on representative high-density particle regions.
+      Test kernel configurations:
+        - Shapes: MORPH_ELLIPSE, MORPH_RECT, MORPH_CROSS
+        - Sizes: 3x3, 5x5, 7x7
+      Evaluate on 2-3 image patches with touching particles requiring separation.
+      Quality metrics: successful separation count, over-erosion count, visual inspection.
+      Document optimal kernel (likely elliptical 3x3 or 5x5) in src/config/params.yaml.
+      Generate side-by-side comparison: masks before/after opening for each configuration.
+      Balance tradeoff: aggressive separation (larger kernel, risk of over-erosion) vs conservative (smaller kernel, risk of merged particles).
+      Update morphology module with tuned default kernel.
+    wave: 3
+    agent: gem-implementer
+    priority: medium
+    status: pending
+    dependencies:
+      - implement-morphological-refinement
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/nmc811_segmentation_1743108150/research_findings_Image Preprocessing & Morphological Operations.yaml
+        description: Morphological opening parameter guidance, open questions about structuring elements
+    estimated_effort: small
+    estimated_files: 2
+    estimated_lines: 150
+    focus_area: null
+    verification:
+      - Kernel grid tested on high-density particle patches
+      - Optimal kernel identified with visual validation
+      - params.yaml updated with tuned kernel settings
+      - Comparison visualizations show separation improvement
+    acceptance_criteria:
+      - At least 6 kernel configurations tested (3 shapes × 2 sizes minimum)
+      - Optimal settings successfully separate touching particles without over-erosion
+      - Tuned kernel documented in config file with examples
+    failure_modes:
+      - scenario: Single kernel size insufficient for heterogeneous particle sizes (small particles over-erode, large particles under-separate)
+        likelihood: medium
+        impact: medium
+        mitigation: Implement adaptive kernel sizing based on particle area distribution or use conservative small kernel (3x3) with manual refinement
+    tech_stack:
+      - OpenCV
+      - NumPy
+    test_coverage: Visual validation with manual review on representative samples
+    requires_review: true
+    review_depth: lightweight
+    review_security_sensitive: false
+
+  - id: generate-heatmap-visualizations
+    title: Implement circularity-based heatmap with red=fractured, green=intact color coding
+    description: |
+      Implement visualization module for circularity-based degradation assessment.
+      Create heatmap_generator.py: Map circularity values [0-1] to custom red-green colormap.
+      Use cv2.applyColorMap with COLORMAP_JET or custom LUT (red endpoint=0, green endpoint=1).
+      Create overlay_renderer.py: Alpha-blend heatmap onto original grayscale image (alpha=0.5 default).
+      Generate per-image visualizations: {image_name}_heatmap_circularity.png.
+      Add particle ID annotations for manual verification (optional toggle).
+      Include colorbar legend showing circularity scale on visualization.
+      Batch process all 6 gold_standard images after validation filtering.
+      Document visualization pipeline and quality criteria for manual inspection.
+    wave: 4
+    agent: gem-implementer
+    priority: medium
+    status: pending
+    dependencies:
+      - implement-validation-filters
+      - design-visualization-system
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: Heatmap visualization requirements in scope.in_scope
+      - path: docs/plan/nmc811_segmentation_1743108150/research_findings_Geometric Metrics Extraction & Validation Filters.yaml
+        description: Heatmap generation patterns with OpenCV
+    estimated_effort: medium
+    estimated_files: 2
+    estimated_lines: 250
+    focus_area: null
+    verification:
+      - Heatmap clearly distinguishes low circularity (red) vs high circularity (green)
+      - Overlay preserves original image features with visible particle boundaries
+      - Manually labeled fractured particles appear red in visualization
+      - Colorbar legend correctly represents circularity scale
+    acceptance_criteria:
+      - All 6 gold_standard images have corresponding heatmap visualizations
+      - Color coding matches acceptance criterion: fractured=red, intact=green
+      - Visualizations saved to output directory with consistent naming
+    failure_modes:
+      - scenario: Color mapping ambiguous for mid-range circularity values (0.4-0.6)
+        likelihood: low
+        impact: low
+        mitigation: Use diverging colormap with clear red-green endpoints, avoid confusing yellow/orange transition zone
+    tech_stack:
+      - OpenCV (cv2.applyColorMap)
+      - NumPy
+      - Matplotlib (for colorbar legend)
+    test_coverage: Visual validation with manual review on 10 labeled particles
+    requires_review: true
+    review_depth: standard
+    review_security_sensitive: false
+
+  - id: consolidate-csv-export
+    title: Consolidate metrics from 6 images into analisis_gold_standard.csv
+    description: |
+      Implement CSV export module for consolidated batch output.
+      Create csv_exporter.py: Concatenate DataFrames from all 6 processed images.
+      Ensure consistent column schema across all images before concatenation.
+      Add global metadata: processing date, parameter settings, validation statistics.
+      Export to analisis_gold_standard.csv with proper formatting (no index column, headers included).
+      Include per-row metadata: image source filename, particle ID (unique across batch).
+      Sort by image_source then particle_id for organized output.
+      Validate CSV integrity: no missing values in critical columns (area, circularity), proper float/int dtypes.
+      Document CSV schema and column descriptions for downstream statistical analysis.
+    wave: 4
+    agent: gem-implementer
+    priority: medium
+    status: pending
+    dependencies:
+      - implement-validation-filters
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: CSV export requirements in scope.in_scope (consolidated export, analisis_gold_standard.csv)
+    estimated_effort: small
+    estimated_files: 1
+    estimated_lines: 150
+    focus_area: null
+    verification:
+      - CSV file created with all 6 images' metrics concatenated
+      - Column schema consistent across all rows
+      - No missing values in critical columns (area, perimeter, circularity except degenerate cases)
+      - CSV readable in Excel without encoding issues
+    acceptance_criteria:
+      - CSV contains >90% of visible particles from manual count (PRD acceptance criterion)
+      - Column headers match documented schema
+      - CSV file size reasonable (<5MB for ~1000 particles estimate)
+    failure_modes:
+      - scenario: Schema inconsistency causes concatenation errors (missing columns, dtype mismatches)
+        likelihood: low
+        impact: medium
+        mitigation: Implement strict schema validation before concatenation, add column alignment checks, document required columns
+    tech_stack:
+      - pandas
+    test_coverage: Unit tests for DataFrame concatenation, schema validation, CSV write/read integrity
+    requires_review: false
+    review_depth: null
+    review_security_sensitive: false
+
+  - id: build-orchestrator-script
+    title: Create main.py orchestrator for end-to-end pipeline execution
+    description: |
+      Implement main orchestrator script integrating all pipeline modules.
+      Design sequential processing loop: iterate through gold_standard/*.tif files.
+      Pipeline flow per image:
+        1. Load 16-bit TIFF with tiff_loader
+        2. Apply CLAHE preprocessing with tuned parameters
+        3. Run MobileSAM inference with automatic mask generation
+        4. (Optional) Manual refinement prompts for ambiguous particles
+        5. Apply morphological opening with tuned kernel
+        6. Exclude edge particles
+        7. Extract geometric metrics
+        8. Append to batch accumulator
+        9. Call torch.cuda.empty_cache() to free VRAM
+        10. Log VRAM usage and processing time
+      After all 6 images: consolidate DataFrames, apply validation filters, export CSV, generate heatmaps.
+      Add command-line arguments: input directory, output directory, config file path, enable/disable manual refinement.
+      Implement error handling: try-catch per image with continue-on-error option, log failures.
+      Add progress tracking: tqdm progress bar, ETA estimation, intermediate checkpoints.
+    wave: 5
+    agent: gem-implementer
+    priority: high
+    status: pending
+    dependencies:
+      - integrate-mobilesam-model
+      - implement-preprocessing-pipeline
+      - implement-morphological-refinement
+      - extract-geometric-metrics
+      - implement-validation-filters
+      - consolidate-csv-export
+      - generate-heatmap-visualizations
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: End-to-end pipeline requirements, performance targets (<30 min), VRAM constraints
+    estimated_effort: medium
+    estimated_files: 1
+    estimated_lines: 400
+    focus_area: null
+    verification:
+      - Pipeline completes 6 images without manual intervention (automatic mode)
+      - Total execution time <30 minutes on RTX 4060 (PRD acceptance criterion)
+      - Peak VRAM usage <7.5GB logged for each image
+      - Output CSV and visualizations generated in output directory
+    acceptance_criteria:
+      - Command-line interface documented with usage examples
+      - Error handling prevents single image failure from crashing entire pipeline
+      - Progress tracking shows ETA and intermediate status
+      - Logging includes timestamps, VRAM usage, processing times per stage
+    failure_modes:
+      - scenario: Pipeline hangs on corrupted TIFF file or MobileSAM timeout
+        likelihood: low
+        impact: medium
+        mitigation: Implement per-image timeout (5 min max), skip corrupted files with error logging, add resume-from-checkpoint capability
+    tech_stack:
+      - Python argparse (CLI)
+      - tqdm (progress tracking)
+      - Python logging
+    test_coverage: Integration test on subset of 2 images, end-to-end smoke test
+    requires_review: true
+    review_depth: standard
+    review_security_sensitive: false
+
+  - id: execute-validation-testing
+    title: Run end-to-end pipeline on gold_standard dataset and validate acceptance criteria
+    description: |
+      Execute complete pipeline on all 6 gold_standard images to validate PRD acceptance criteria.
+      Validation checklist from PRD:
+        1. All 6 .tif images process without VRAM overflow (monitor peak <7.5GB)
+        2. Segmentation masks separate adjacent particles (visual inspection)
+        3. Circularity formula returns values in [0,1] range (unit test validation)
+        4. Heatmap clearly distinguishes fractured vs intact particles (manual labeling of 10 particles)
+        5. CSV contains >90% of visible particles from manual count (2 reference images)
+        6. Pipeline completes in <30 minutes on RTX 4060 (time execution)
+      Manual validation tasks:
+        - Count particles in 2 reference images manually, compare with automated detection
+        - Label 10 particles as fractured/intact, verify color coding matches
+        - Visual inspection of masks in high-density regions for separation quality
+      Generate validation report: pass/fail per criterion, screenshots, performance metrics.
+      Document edge cases encountered and mitigation strategies applied.
+      Iterate with fixes if any acceptance criteria fail.
+    wave: 6
+    agent: gem-browser-tester
+    priority: high
+    status: pending
+    dependencies:
+      - build-orchestrator-script
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: Acceptance criteria checklist in acceptance_criteria section
+      - path: gold_standard/
+        description: 6 target images for validation
+    estimated_effort: medium
+    estimated_files: 1
+    estimated_lines: 200
+    focus_area: null
+    verification:
+      - All 6 PRD acceptance criteria pass validation
+      - Validation report documents pass/fail status with evidence
+      - Performance metrics logged (execution time, peak VRAM, detection rate)
+    acceptance_criteria:
+      - VRAM stays below 7.5GB for all images
+      - >90% particle detection rate achieved on 2 reference images
+      - Pipeline completes in <30 minutes
+      - Circularity values in [0,1] range for all non-degenerate particles
+      - Visual validation confirms segmentation quality and heatmap accuracy
+    failure_modes:
+      - scenario: Detection rate falls below 90% due to missed low-contrast particles
+        likelihood: medium
+        impact: critical
+        mitigation: Iterate on CLAHE/MobileSAM parameters, add manual refinement prompts, document parameter sensitivity
+    requires_review: true
+    review_depth: standard
+    review_security_sensitive: false
+    validation_matrix:
+      - scenario: VRAM overflow prevention validation
+        steps:
+          - Run pipeline with nvidia-smi VRAM monitoring
+          - Log peak VRAM usage after each image
+          - Verify all 6 images complete without OOM crashes
+        expected_result: Peak VRAM <7.5GB for all images, no OOM errors
+      - scenario: Particle detection rate validation
+        steps:
+          - Manually count particles in 2 reference images (img_RDBS_0050, img_RDBS_0485)
+          - Run automated pipeline on same images
+          - Compare automated count to manual count
+        expected_result: Automated count ≥90% of manual count
+      - scenario: Circularity formula correctness validation
+        steps:
+          - Generate synthetic circular mask (perfect circle)
+          - Calculate circularity with pipeline code
+          - Verify circularity ≈ 1.0 (within 5% tolerance)
+        expected_result: Circularity value in range [0.95, 1.0]
+      - scenario: Heatmap color coding validation
+        steps:
+          - Manually label 10 particles as fractured (low circularity) or intact (high circularity)
+          - Run pipeline and generate heatmap visualization
+          - Verify color coding matches labels (fractured=red, intact=green)
+        expected_result: At least 9/10 particles color-coded correctly
+      - scenario: Segmentation separation quality validation
+        steps:
+          - Identify 3 high-density regions with touching particles
+          - Visual inspection of segmentation masks
+          - Verify particles separated without merged boundaries
+        expected_result: No merged particles in high-density regions
+      - scenario: Performance target validation
+        steps:
+          - Run pipeline on all 6 images with time.time() tracking
+          - Log total execution time
+          - Verify completion within 30-minute target
+        expected_result: Total execution time <30 minutes on RTX 4060
+
+  - id: create-project-documentation
+    title: Write comprehensive user guide and technical documentation
+    description: |
+      Create end-user and developer documentation for pipeline.
+      User guide (README.md):
+        - Installation instructions (conda environment setup)
+        - Quick start guide (running pipeline on gold_standard images)
+        - Configuration guide (params.yaml, mobilesam_config.yaml)
+        - Troubleshooting section (CUDA errors, VRAM overflow, parameter tuning)
+        - Output interpretation (CSV schema, heatmap visualization)
+      Technical documentation (docs/):
+        - Architecture overview (module responsibilities, data flow)
+        - API reference (function signatures, parameter descriptions)
+        - Algorithm details (CLAHE, morphological opening, circularity formula)
+        - Performance benchmarks (execution times, VRAM usage)
+        - Parameter tuning guide (CLAHE, morphology, MobileSAM grid density)
+        - Extension guide (adding new metrics, custom validation filters)
+      Code documentation:
+        - Docstrings for all public functions (Google style)
+        - Inline comments for complex logic (VRAM management, edge exclusion)
+        - Type hints for function signatures
+      Generate example outputs: sample CSV, heatmap visualizations for documentation.
+    wave: 6
+    agent: gem-documentation-writer
+    priority: medium
+    status: pending
+    dependencies:
+      - execute-validation-testing
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: Feature descriptions and requirements for documentation content
+    estimated_effort: medium
+    estimated_files: 3
+    estimated_lines: 500
+    focus_area: null
+    verification:
+      - README covers installation, usage, and troubleshooting
+      - Technical docs include architecture diagrams and API reference
+      - Code docstrings complete for all public functions
+      - Example outputs included in documentation
+    acceptance_criteria:
+      - User can install and run pipeline following README instructions
+      - Technical docs enable extension development
+      - Troubleshooting section addresses common CUDA/VRAM issues
+    failure_modes: []
+    requires_review: true
+    review_depth: lightweight
+    review_security_sensitive: false
+    task_type: documentation
+    audience: developers
+    coverage_matrix:
+      - Installation and environment setup
+      - Pipeline execution and configuration
+      - Output interpretation
+      - Troubleshooting and debugging
+      - Architecture and code organization
+      - Parameter tuning guidelines

@@ -1,0 +1,187 @@
+plan_id: nmc811_segmentation_1743108150
+task_id: design-visualization-system
+status: completed
+version: 1.0.0
+created_at: 2026-03-26T00:00:00Z
+owner_agent: gem-planner
+
+objective: >
+  Define implementation-ready circularity heatmap contract for NMC811 particle overlays,
+  with deterministic color semantics, normalization policy, naming conventions, and legend strategy.
+
+contract_summary:
+  semantics:
+    fractured: "Lower circularity should render toward red"
+    intact: "Higher circularity should render toward green"
+  color_direction: "circularity ↑ => greener, circularity ↓ => redder"
+  boundary_policy: "Particle boundaries must remain visible after overlay blending"
+
+visualization_contract:
+  input_interface:
+    producer_task: implement-validation-filters
+    consumer_task: generate-heatmap-visualizations
+    required_columns:
+      - particle_id
+      - circularity
+      - validation_status
+      - rejection_reason
+      - contour_points
+      - centroid_xy
+    required_types:
+      particle_id: int
+      circularity: float
+      validation_status: string
+      rejection_reason: string|null
+      contour_points: array[point]
+      centroid_xy: array[float,float]
+    invariants:
+      - "circularity must be finite and clamped to [0.0, 1.0] before color mapping"
+      - "validation_status in {valid,rejected}"
+      - "contour_points length >= 3 for drawable boundaries"
+
+  normalization_policy:
+    strategy: fixed_domain
+    domain: [0.0, 1.0]
+    formula: "norm = clip((circularity - 0.0) / (1.0 - 0.0), 0.0, 1.0)"
+    rationale:
+      - "Deterministic cross-image comparability"
+      - "Avoid image-local min/max shifting that changes semantics across runs"
+    fallback_rules:
+      - condition: circularity_nan_or_inf
+        action: "set norm=0.0 and mark visualization_flag=invalid_metric"
+      - condition: circularity_outside_domain
+        action: "clip to nearest boundary and log clipped_count"
+
+  colormap_policy:
+    lut_name: circularity_red_to_green_v1
+    endpoints:
+      fractured_low: "#D73027"   # red
+      intact_high: "#1A9850"     # green
+    midpoint:
+      neutral_mid: "#FEE08B"     # yellow-ish transition
+    interpolation: linear_rgb
+    mapping_rule:
+      norm_0_0: "#D73027"
+      norm_0_5: "#FEE08B"
+      norm_1_0: "#1A9850"
+    implementation_note: "Do not invert LUT; inverted map violates PRD red=fractured, green=intact"
+
+  overlay_policy:
+    base_image_render:
+      source: preprocessed_grayscale
+      conversion: "grayscale -> BGR"
+    fill_overlay:
+      alpha: 0.45
+      blend_formula: "output = (1-alpha)*base + alpha*mask_color"
+    boundary_overlay:
+      enabled: true
+      color: "#FFFFFF"
+      thickness_px: 1
+      draw_order: "fill first, boundary second"
+    rejected_particles:
+      treatment: "render with desaturated gray (#808080) and optional hatch/outline"
+      rationale: "Preserve visual context without mixing rejected objects into integrity signal"
+
+  legend_strategy:
+    required: true
+    placement: top_right
+    structure:
+      - "continuous bar labeled Circularity [0.00 -> 1.00]"
+      - "left anchor text: Fractured (Low Circularity)"
+      - "right anchor text: Intact (High Circularity)"
+      - "discrete swatch for Rejected/Filtered particles (gray)"
+    style:
+      background: "rgba(0,0,0,0.45)"
+      font_scale: 0.5
+      font_color: "#FFFFFF"
+    readability_requirements:
+      - "Legend must not occlude >10% of segmented region area"
+      - "Legend text must remain readable on dark and bright backgrounds"
+
+  output_naming_contract:
+    output_directory: "{output_root}/visualizations"
+    per_image_files:
+      - name: "{image_stem}__heatmap_circularity_overlay.png"
+        content: "Main interpretable overlay with legend"
+      - name: "{image_stem}__heatmap_circularity_mask.png"
+        content: "Colorized mask without base image blending"
+      - name: "{image_stem}__heatmap_circularity_legend.png"
+        content: "Legend artifact for QA/reference"
+      - name: "{image_stem}__heatmap_circularity_meta.json"
+        content: "Normalization/lut/alpha/boundary/rejected counts"
+    batch_manifest:
+      name: "batch__heatmap_circularity_manifest.json"
+      fields:
+        - image_stem
+        - overlay_path
+        - mask_path
+        - legend_path
+        - meta_path
+        - valid_particles
+        - rejected_particles
+        - clipped_count
+    constraints:
+      - "all filenames lowercase except original image stem"
+      - "suffix tokens must be exact for deterministic downstream discovery"
+
+  quality_gates_for_consumer:
+    - gate: color_semantics_gate
+      check: "sampled low-circularity particles trend red; high-circularity trend green"
+    - gate: boundary_visibility_gate
+      check: ">=95% of valid particle contours remain visually separable in dense regions"
+    - gate: deterministic_outputs_gate
+      check: "same input + config yields identical filenames and meta parameters"
+
+integration_wiring:
+  downstream_tasks:
+    - task_id: generate-heatmap-visualizations
+      consumes:
+        - visualization_contract.input_interface
+        - visualization_contract.normalization_policy
+        - visualization_contract.colormap_policy
+        - visualization_contract.overlay_policy
+        - visualization_contract.legend_strategy
+        - visualization_contract.output_naming_contract
+      produces:
+        - per-image overlay/mask/legend/meta artifacts
+        - batch manifest
+    - task_id: execute-validation-testing
+      consumes:
+        - quality_gates_for_consumer
+        - output_naming_contract
+      validates:
+        - PRD heatmap acceptance criterion alignment
+        - fractured/intact semantic consistency
+
+acceptance_mapping:
+  - criterion_source: "plan_b_v3.yaml::design-visualization-system::Mapping clearly encodes fractured vs intact semantics"
+    mapped_deliverables:
+      - visualization_contract.colormap_policy
+      - visualization_contract.normalization_policy
+      - visualization_contract.legend_strategy
+    verification_strategy:
+      - "Use fixed-domain normalization and endpoint-anchored LUT"
+      - "Confirm low circularity maps to red anchor, high to green anchor"
+
+  - criterion_source: "plan_b_v3.yaml::design-visualization-system::Overlay preserves particle boundary visibility"
+    mapped_deliverables:
+      - visualization_contract.overlay_policy.boundary_overlay
+      - visualization_contract.overlay_policy.fill_overlay
+      - quality_gates_for_consumer.boundary_visibility_gate
+    verification_strategy:
+      - "Draw 1px white contour after fill blending"
+      - "Enforce alpha=0.45 default and boundary separability gate"
+
+  - criterion_source: "PRD.yaml::Heatmap visualization clearly distinguishes fractured vs intact particles"
+    mapped_deliverables:
+      - contract_summary.semantics
+      - visualization_contract.colormap_policy
+      - visualization_contract.legend_strategy
+    verification_strategy:
+      - "Legend anchors explicitly communicate fractured/intact meaning"
+      - "Midpoint color retained as transitional, not endpoint"
+
+open_implementation_notes:
+  - "If contour_points unavailable from upstream, consumer must derive contours from refined label mask before rendering"
+  - "If runtime lacks hatch rendering, fallback to gray boundary-only for rejected particles"
+  - "Meta JSON must persist all rendering params to support visual regression testing"

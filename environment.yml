@@ -1,0 +1,28 @@
+name: nmc811-segmentation
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pytorch=2.3.*
+  - torchvision=0.18.*
+  - torchaudio=2.3.*
+  - pytorch-cuda=12.1
+  - numpy=1.26.*
+  - pandas=2.2.*
+  - scikit-image=0.24.*
+  - opencv=4.10.*
+  - tifffile=2024.8.*
+  - scipy=1.14.*
+  - matplotlib=3.9.*
+  - pip=24.*
+  - pip:
+      - pytest
+      - ruff
+      - mypy
+      - pandas-stubs
+      - pyyaml
+      - types-PyYAML
+      - types-tqdm

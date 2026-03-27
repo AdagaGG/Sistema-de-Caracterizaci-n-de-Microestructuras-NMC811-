@@ -1,0 +1,14 @@
+{
+  "files": [
+    {
+      "clipped_count": 0,
+      "image_stem": "img_RDBS_0100",
+      "legend_path": "docs\\plan\\nmc811_segmentation_1743108150\\evidence\\execute-validation-testing_final\\full_pipeline\\img_RDBS_0100\\visualizations\\img_RDBS_0100__heatmap_circularity_legend.png",
+      "mask_path": "docs\\plan\\nmc811_segmentation_1743108150\\evidence\\execute-validation-testing_final\\full_pipeline\\img_RDBS_0100\\visualizations\\img_RDBS_0100__heatmap_circularity_mask.png",
+      "meta_path": "docs\\plan\\nmc811_segmentation_1743108150\\evidence\\execute-validation-testing_final\\full_pipeline\\img_RDBS_0100\\visualizations\\img_RDBS_0100__heatmap_circularity_meta.json",
+      "overlay_path": "docs\\plan\\nmc811_segmentation_1743108150\\evidence\\execute-validation-testing_final\\full_pipeline\\img_RDBS_0100\\visualizations\\img_RDBS_0100__heatmap_circularity_overlay.png",
+      "rejected_particles": 0,
+      "valid_particles": 0
+    }
+  ]
+}

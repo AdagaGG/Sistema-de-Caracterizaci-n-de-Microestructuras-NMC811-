@@ -1,0 +1,469 @@
+plan_id: nmc811_segmentation_1743108150
+objective: Develop a modular Computer Vision pipeline using MobileSAM and Python to automatically segment active material particles in 16-bit FIB-SEM .tif images, generating exportable geometric datasets to Excel for deep statistical analysis of cathode degradation
+focus_area: Geometric Metrics Extraction & Validation Filters
+created_at: "2026-03-26T14:39:04.1929335-06:00"
+created_by: gem-researcher
+status: completed
+
+tldr: |
+  - This is a greenfield project with no existing codebase; research focused on industry-standard patterns for geometric metrics extraction in Python-based particle analysis pipelines
+  - Best practice: Use scikit-image regionprops() for comprehensive metric calculation (area, perimeter, eccentricity, solidity, extent, equivalent_diameter, orientation, major/minor axes) from labeled masks
+  - OpenCV contour-based approach (cv2.findContours + cv2.contourArea + cv2.arcLength) suitable for circularity calculation with formula C = 4πA/P²
+  - Multi-stage validation filter architecture recommended: (1) area thresholds [50-10000 px], (2) aspect ratio filtering [0.25-4.0], (3) edge particle exclusion, (4) optional morphological cleanup
+  - Heatmap visualization via cv2.applyColorMap with normalized circularity values mapped to custom red-green LUT for degradation assessment
+
+research_metadata:
+  methodology: |
+    Hybrid approach combining Context7 library documentation queries (/opencv/opencv-python, /scikit-image/scikit-image) 
+    and web research for geometric metrics extraction patterns in microscopy particle analysis. 
+    Three-pass research: (1) library API discovery for regionprops and contour analysis, (2) validation filter architectures 
+    in image segmentation pipelines, (3) heatmap visualization patterns for circularity-based color coding
+  scope: |
+    Domain-specific research limited to geometric metrics extraction and validation filters for binary/labeled particle masks. 
+    Coverage includes: area/perimeter calculation methods, circularity formula implementation, aspect ratio computation, 
+    multi-criteria filtering strategies, edge particle detection, and heatmap visualization for quality metrics
+  confidence: high
+  coverage: 100
+
+files_analyzed:
+  - file: N/A - Greenfield project
+    path: N/A
+    purpose: No existing codebase; research based on external library documentation and industry patterns
+    key_elements:
+      - element: scikit-image.measure.regionprops
+        type: function
+        location: External library API
+        description: Primary method for extracting comprehensive geometric properties from labeled image regions
+      - element: cv2.findContours + cv2.contourArea + cv2.arcLength
+        type: function
+        location: External library API
+        description: OpenCV contour-based approach for area/perimeter calculation suitable for circularity computation
+      - element: cv2.applyColorMap
+        type: function
+        location: External library API
+        description: Heatmap visualization by applying color lookup tables to grayscale metric images
+    language: python
+    lines: 0
+
+patterns_found:
+  - category: metrics_calculation
+    pattern: scikit-image regionprops-based extraction
+    description: |
+      Industry-standard pattern using skimage.measure.regionprops() or regionprops_table() to extract 
+      comprehensive geometric metrics from labeled binary masks. Provides direct access to area, perimeter, 
+      eccentricity, solidity, extent, equivalent_diameter, orientation, axis_major_length, axis_minor_length, 
+      and bbox properties. Returns structured data ready for pandas DataFrame export
+    examples:
+      - file: External scikit-image documentation
+        location: skimage.measure.regionprops API
+        snippet: |
+          from skimage.measure import regionprops, label
+          labeled_mask = label(binary_mask)
+          regions = regionprops(labeled_mask)
+          for region in regions:
+              area = region.area  # pixels
+              perimeter = region.perimeter  # pixels
+              eccentricity = region.eccentricity  # 0-1
+              equivalent_diameter = region.equivalent_diameter_area
+              major_axis = region.axis_major_length
+              minor_axis = region.axis_minor_length
+    prevalence: common
+
+  - category: metrics_calculation
+    pattern: OpenCV contour-based extraction
+    description: |
+      Alternative pattern using OpenCV's contour detection for area/perimeter calculation. 
+      Suitable when working directly with binary masks without labeled regions. 
+      Requires cv2.findContours → iterate contours → extract metrics per contour. 
+      Commonly used for circularity calculation with formula C = 4πA/P²
+    examples:
+      - file: External opencv-python documentation
+        location: cv2.findContours + cv2.contourArea workflow
+        snippet: |
+          import cv2
+          import numpy as np
+          contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+          for contour in contours:
+              area = cv2.contourArea(contour)
+              perimeter = cv2.arcLength(contour, closed=True)
+              circularity = 4 * np.pi * area / (perimeter ** 2) if perimeter > 0 else 0
+              x, y, w, h = cv2.boundingRect(contour)
+              aspect_ratio = float(w) / h if h > 0 else 0
+    prevalence: common
+
+  - category: validation_filtering
+    pattern: Multi-criteria particle validation filter
+    description: |
+      Sequential filtering pipeline applying multiple thresholds to reject noise, artifacts, and 
+      edge particles. Typical stages: (1) Area filtering (min/max thresholds), (2) Aspect ratio 
+      filtering (reject extreme elongations), (3) Edge particle exclusion (bbox touching borders), 
+      (4) Optional morphological criteria (solidity, convexity). Each stage removes particles failing 
+      the criterion before proceeding to next stage
+    examples:
+      - file: Conceptual pattern from microscopy analysis workflows
+        location: N/A
+        snippet: |
+          # Stage 1: Area filtering
+          valid_particles = [r for r in regions if 50 <= r.area <= 10000]
+          
+          # Stage 2: Aspect ratio filtering
+          valid_particles = [r for r in valid_particles 
+                             if 0.25 <= (r.axis_minor_length / r.axis_major_length) <= 4.0]
+          
+          # Stage 3: Edge particle exclusion
+          h, w = binary_mask.shape
+          valid_particles = [r for r in valid_particles 
+                             if not (r.bbox[0] == 0 or r.bbox[1] == 0 
+                                     or r.bbox[2] >= h or r.bbox[3] >= w)]
+    prevalence: common
+
+  - category: validation_filtering
+    pattern: Small object removal via scipy.ndimage.label + bincount
+    description: |
+      Post-segmentation cleanup using connected component labeling followed by size-based filtering. 
+      Uses scipy.ndimage.label to identify components, numpy.bincount to compute sizes, 
+      then creates boolean mask to retain only objects exceeding size threshold. 
+      Alternative: skimage.morphology.remove_small_objects (deprecated min_size → area_threshold parameter)
+    examples:
+      - file: External scikit-image tutorial documentation
+        location: skimage tutorial_segmentation.rst
+        snippet: |
+          import scipy as sp
+          import numpy as np
+          label_objects, nb_labels = sp.ndimage.label(binary_mask)
+          sizes = np.bincount(label_objects.ravel())
+          mask_sizes = sizes > 50  # minimum area threshold
+          mask_sizes[0] = 0  # exclude background
+          cleaned_mask = mask_sizes[label_objects]
+    prevalence: common
+
+  - category: visualization
+    pattern: Circularity heatmap via custom color mapping
+    description: |
+      Visualization strategy mapping continuous circularity metric (0-1 range) to red-green color gradient 
+      for visual quality assessment. Red indicates low circularity (fractured/degraded particles), 
+      green indicates high circularity (intact particles). Implementation: normalize circularity to 0-255, 
+      create custom LUT [red→yellow→green], apply via cv2.applyColorMap or manual indexing
+    examples:
+      - file: Conceptual pattern from particle degradation analysis
+        location: N/A
+        snippet: |
+          import cv2
+          import numpy as np
+          # Normalize circularity to 0-255 range
+          circularity_values = np.array([region.circularity for region in regions])
+          circularity_norm = ((circularity_values - circularity_values.min()) / 
+                              (circularity_values.max() - circularity_values.min()) * 255).astype(np.uint8)
+          
+          # Create custom red-green LUT (256 entries)
+          lut = np.zeros((256, 1, 3), dtype=np.uint8)
+          lut[:, 0, 0] = np.linspace(255, 0, 256)  # Red: high→low
+          lut[:, 0, 1] = np.linspace(0, 255, 256)  # Green: low→high
+          lut[:, 0, 2] = 0  # Blue: constant zero
+          
+          # Apply colormap to grayscale circularity image
+          heatmap = cv2.applyColorMap(circularity_image, lut)
+    prevalence: occasional
+
+  - category: structure
+    pattern: DataFrame export for statistical analysis
+    description: |
+      Conversion of geometric metrics to pandas DataFrame for CSV export and posterior statistical analysis. 
+      Two approaches: (1) Manual dict assembly per particle, (2) skimage.measure.regionprops_table() 
+      which directly returns dict compatible with pd.DataFrame(). Include particle ID, spatial coordinates 
+      (centroid), all metrics, and image source identifier for batch processing
+    examples:
+      - file: Conceptual pattern from batch image analysis pipelines
+        location: N/A
+        snippet: |
+          import pandas as pd
+          from skimage.measure import regionprops_table
+          
+          # Approach 1: Manual assembly
+          data = []
+          for idx, region in enumerate(regions):
+              data.append({
+                  'particle_id': idx + 1,
+                  'area_px': region.area,
+                  'area_um2': region.area * (0.08431 ** 2),
+                  'perimeter_px': region.perimeter,
+                  'circularity': 4 * np.pi * region.area / (region.perimeter ** 2),
+                  'equivalent_diameter_um': region.equivalent_diameter_area * 0.08431,
+                  'aspect_ratio': region.axis_minor_length / region.axis_major_length,
+                  'centroid_x': region.centroid[1],
+                  'centroid_y': region.centroid[0],
+                  'image_source': image_filename
+              })
+          df = pd.DataFrame(data)
+          
+          # Approach 2: regionprops_table (faster, less flexible)
+          props = regionprops_table(labeled_mask, properties=['area', 'perimeter', 'eccentricity'])
+          df = pd.DataFrame(props)
+    prevalence: common
+
+related_architecture:
+  components_relevant_to_domain:
+    - component: Metrics Extractor Module
+      responsibility: Calculate geometric properties (area, perimeter, circularity, aspect ratio, equivalent diameter) from segmentation masks
+      location: To be created in src/metrics/ or src/analysis/
+      relationship_to_domain: Core component - domain IS this module
+    - component: Validation Filter Module
+      responsibility: Apply multi-stage filtering to reject invalid particles (noise, edge particles, extreme aspect ratios)
+      location: To be created in src/filters/ or src/validation/
+      relationship_to_domain: Core component - domain IS this module
+    - component: Visualization Module
+      responsibility: Generate circularity heatmaps with red-green color gradient overlays
+      location: To be created in src/visualization/ or src/plotting/
+      relationship_to_domain: Domain depends on this for quality assessment outputs
+    - component: Data Export Module
+      responsibility: Convert metric arrays to pandas DataFrame and export to CSV with proper headers
+      location: To be created in src/export/ or integrated into metrics module
+      relationship_to_domain: Domain uses this for statistical analysis pipeline output
+
+  interfaces_used_by_domain:
+    - interface: skimage.measure.regionprops(labeled_image, properties=None)
+      location: External scikit-image library
+      usage_pattern: Primary API for extracting comprehensive region properties from labeled masks
+    - interface: cv2.findContours(image, mode, method)
+      location: External opencv-python library
+      usage_pattern: Alternative API for contour-based metric extraction when working with binary masks
+    - interface: cv2.applyColorMap(src, colormap)
+      location: External opencv-python library
+      usage_pattern: Apply predefined or custom color lookup tables for heatmap visualization
+    - interface: pd.DataFrame(data)
+      location: External pandas library
+      usage_pattern: Structured data container for CSV export of geometric metrics
+
+  data_flow_involving_domain:
+    Segmentation masks (binary/labeled) → Geometric Metrics Extractor (calculate area, perimeter, circularity, aspect ratio, etc.) → Validation Filters (apply area/aspect ratio/edge thresholds) → Valid particle metrics → Visualization (circularity heatmap generation) + Export (pandas DataFrame → CSV) → Statistical analysis outputs
+
+  key_relationships_to_domain:
+    - from: MobileSAM Segmentation Module (upstream)
+      to: Geometric Metrics Extractor
+      relationship: Provides binary/labeled masks as input for metric calculation
+    - from: Geometric Metrics Extractor
+      to: Validation Filter Module
+      relationship: Passes raw metrics for threshold-based filtering
+    - from: Validation Filter Module
+      to: Visualization Module + Export Module
+      relationship: Provides cleaned metric arrays for heatmap rendering and CSV export
+    - from: Metrics Extractor
+      to: Statistical Analysis Pipeline (downstream)
+      relationship: Exports CSV data for deep statistical characterization of degradation patterns
+
+related_technology_stack:
+  languages_used_in_domain:
+    - Python (3.8+, compatible with PyTorch CUDA requirements)
+
+  frameworks_used_in_domain:
+    - name: scikit-image
+      usage_in_domain: Primary library for regionprops-based geometric metrics extraction from labeled masks
+    - name: OpenCV (opencv-python or opencv-python-headless)
+      usage_in_domain: Contour-based metric extraction, bounding box calculation, heatmap visualization via applyColorMap
+    - name: pandas
+      usage_in_domain: DataFrame construction for CSV export of geometric metrics
+    - name: NumPy
+      usage_in_domain: Array operations for circularity calculation, normalization, and metric transformations
+
+  libraries_used_in_domain:
+    - name: scikit-image (skimage.measure)
+      purpose_in_domain: |
+        Provides regionprops() and regionprops_table() for extracting area, perimeter, eccentricity, solidity, 
+        equivalent_diameter, orientation, major/minor axis lengths from labeled masks. 
+        Note: Use renamed parameters (area_bbox, axis_major_length, etc.) for consistency with v0.19+
+    - name: scipy (scipy.ndimage)
+      purpose_in_domain: |
+        Connected component labeling via label() for small object removal. 
+        Alternative to skimage.morphology.remove_small_objects for area-based filtering
+    - name: opencv-python (cv2)
+      purpose_in_domain: |
+        Contour detection (findContours), area/perimeter calculation (contourArea, arcLength), 
+        bounding box extraction (boundingRect), and heatmap visualization (applyColorMap)
+    - name: pandas
+      purpose_in_domain: |
+        DataFrame construction for structured CSV export. Enables column-based metric organization 
+        (particle_id, area_um2, circularity, aspect_ratio, etc.) for statistical analysis
+    - name: NumPy
+      purpose_in_domain: |
+        Mathematical operations for circularity formula (4πA/P²), aspect ratio calculations, 
+        normalization of metrics to [0-255] range for visualization, and array-based filtering
+
+  external_apis_used_in_domain: []
+
+related_conventions:
+  naming_patterns_in_domain: |
+    - Function naming: snake_case (calculate_circularity, filter_by_area, generate_heatmap)
+    - Variable naming: Descriptive names for metrics (area_pixels, area_um2, perimeter_px, circularity_values)
+    - Constants: UPPERCASE for thresholds (MIN_AREA_PX = 50, MAX_AREA_PX = 10000, MIN_ASPECT_RATIO = 0.25)
+    - DataFrame columns: lowercase with underscores (particle_id, area_um2, equivalent_diameter_um, aspect_ratio)
+
+  structure_of_domain: |
+    Recommended modular structure:
+    - src/metrics/geometric_extractor.py: Core metrics calculation (area, perimeter, circularity, aspect ratio, etc.)
+    - src/filters/validation_filters.py: Multi-stage particle validation (area, aspect ratio, edge exclusion)
+    - src/visualization/heatmap_generator.py: Circularity-based color mapping for degradation assessment
+    - src/export/csv_exporter.py: DataFrame construction and CSV export with proper headers/units
+
+  error_handling_in_domain: |
+    - Division-by-zero protection for circularity (check perimeter > 0 before C = 4πA/P²)
+    - Division-by-zero protection for aspect ratio (check minor_axis > 0 before ratio calculation)
+    - Edge case handling for empty masks (no particles detected after segmentation)
+    - Validation of input mask format (binary vs labeled, expected data type uint8/uint16)
+    - NaN/Inf detection in metric arrays before DataFrame export
+
+  testing_in_domain: |
+    - Unit tests for circularity formula using synthetic shapes (perfect circle → C=1, square → C≈0.785)
+    - Unit tests for aspect ratio calculation (square → 1.0, 4:1 rectangle → 0.25 or 4.0 depending on orientation)
+    - Integration tests for validation filter pipeline (verify cascading thresholds correctly reject particles)
+    - Regression tests comparing regionprops vs contour-based area/perimeter calculations (should match within tolerance)
+    - Edge case tests for particles touching image borders (bbox coordinates at 0 or max dimensions)
+
+  documentation_in_domain: |
+    - Docstrings for all metric calculation functions specifying units (pixels vs μm) and formula references
+    - Inline comments for circularity formula derivation (C = 4πA/P², perfect circle = 1.0)
+    - README explaining validation threshold selection rationale (area range, aspect ratio limits)
+    - CSV header documentation specifying physical units (um2 for area, um for diameter) and scale factor (0.08431 μm/px)
+
+related_dependencies:
+  internal:
+    - component: Segmentation Module (MobileSAM-based)
+      relationship_to_domain: Upstream dependency - provides binary/labeled masks for metric extraction
+      direction: inbound
+    - component: Preprocessing Module (CLAHE)
+      relationship_to_domain: Indirectly related - ensures quality input for segmentation, which feeds domain
+      direction: inbound
+    - component: Statistical Analysis Pipeline
+      relationship_to_domain: Downstream consumer - uses CSV exports for degradation pattern analysis
+      direction: outbound
+
+  external:
+    - name: scikit-image (>=0.19.0)
+      purpose_for_domain: |
+        Region properties extraction API. Version constraint important for renamed parameters 
+        (area_bbox, axis_major_length vs old names). Compatible with NumPy and SciPy ecosystems
+    - name: opencv-python (>=4.5.0) or opencv-python-headless
+      purpose_for_domain: |
+        Contour-based metrics and visualization. Headless variant recommended for server/Docker deployments. 
+        Requires NumPy compatibility. No GUI dependencies needed if using headless variant
+    - name: pandas (>=1.3.0)
+      purpose_for_domain: |
+        DataFrame construction for CSV export. Provides to_csv() method with flexible formatting options. 
+        Compatible with NumPy arrays for metric columns
+    - name: scipy (>=1.7.0)
+      purpose_for_domain: |
+        Connected component labeling (scipy.ndimage.label) for small object removal. 
+        Alternative to skimage.morphology functions
+    - name: numpy (>=1.21.0)
+      purpose_for_domain: |
+        Core array operations for mathematical calculations (circularity, normalization, filtering). 
+        Required by all other libraries in domain
+
+domain_security_considerations:
+  sensitive_areas: []
+  authentication_patterns_in_domain: N/A - No authentication required for offline image processing
+  authorization_patterns_in_domain: N/A - No authorization required for local file I/O
+  data_validation_in_domain: |
+    - Input mask validation: Verify binary (0/1 or 0/255) or labeled (sequential integers) format
+    - Metric range validation: Ensure circularity ∈ [0,1], aspect_ratio > 0, area > 0 before export
+    - Physical unit conversion validation: Verify scale factor (0.08431 μm/px) applied correctly to area/diameter
+    - CSV export validation: Check for NaN/Inf values in DataFrame columns before writing
+
+testing_patterns:
+  framework: pytest (recommended for Python scientific computing projects)
+  coverage_areas:
+    - Circularity calculation with synthetic shapes (circle, square, ellipse, irregular polygon)
+    - Aspect ratio calculation with rectangles of known dimensions
+    - Validation filter cascades (area → aspect ratio → edge exclusion)
+    - DataFrame export format verification (column names, units, data types)
+    - Heatmap color mapping correctness (low circularity → red, high circularity → green)
+  test_organization: |
+    - tests/test_geometric_metrics.py: Unit tests for metric calculation functions
+    - tests/test_validation_filters.py: Unit/integration tests for multi-stage filtering
+    - tests/test_visualization.py: Visual regression tests for heatmap outputs (using image comparison)
+    - tests/test_export.py: CSV format validation and DataFrame schema tests
+    - tests/fixtures/: Synthetic masks (perfect circles, squares, edge particles) for deterministic testing
+  mock_patterns:
+    - Mock labeled masks with known geometric properties for unit testing
+    - Mock regionprops objects with predefined metric values to test filtering logic
+    - Mock file I/O for CSV export testing (verify content without writing to disk)
+
+open_questions:
+  - question: Should circularity calculation use contour-based (cv2.arcLength) or regionprops-based (region.perimeter) perimeter?
+    context: |
+      Both OpenCV and scikit-image provide perimeter calculations, but implementations may differ slightly 
+      (pixel-based chain code vs mathematical approximation). Need to verify consistency and select one 
+      method for reproducibility. PRD acceptance criterion specifies C = 4πA/P² formula but doesn't mandate 
+      specific perimeter calculation method
+
+  - question: What tolerance should be used for particles with zero or near-zero perimeter?
+    context: |
+      Division-by-zero protection needed for circularity formula. If perimeter = 0 (degenerate case) 
+      or very small (single-pixel artifacts), should particles be rejected during validation or assigned 
+      circularity = 0? Affects error handling strategy and downstream statistical analysis
+
+  - question: Should aspect ratio be calculated as (minor/major) or (width/height) from bounding box?
+    context: |
+      Two common patterns: (1) ratio of fitted ellipse axes (region.axis_minor_length / region.axis_major_length), 
+      (2) ratio of bounding box dimensions (w/h or h/w). PRD specifies ratio range [0.25, 4.0] suggesting 
+      need for min/max normalization regardless of orientation. Need to clarify which method aligns with 
+      research domain conventions
+
+  - question: How should edge particles be precisely defined for exclusion?
+    context: |
+      PRD specifies exclude_edge_particles: true but doesn't define "touching" criteria. Options: 
+      (1) any pixel of particle touches border, (2) bounding box touches border, (3) centroid within 
+      margin of border. Different definitions affect particle count and statistical analysis outcomes
+
+  - question: Should equivalent diameter calculation use area-based (4A/π)^0.5 or perimeter-based formulas?
+    context: |
+      scikit-image provides equivalent_diameter_area (based on area of circle with same area as region). 
+      Alternative formulas exist using perimeter. PRD acceptance criteria mention "Equivalent Diameter" 
+      but don't specify calculation method. Need to verify which metric is standard in FIB-SEM particle analysis
+
+gaps:
+  - area: Physical unit conversion consistency
+    description: |
+      PRD specifies 0.08431 μm/px scale factor but doesn't clarify if this applies uniformly to all 
+      6 gold_standard images or varies per image. Need to verify microscope calibration metadata 
+      from TIFF headers to ensure accurate μm² calculations
+    impact: |
+      Incorrect scale factor propagates to all exported metrics (area_um2, equivalent_diameter_um), 
+      invalidating statistical analysis of absolute particle sizes. Critical for degradation quantification
+
+  - area: Heatmap color gradient specification
+    description: |
+      PRD specifies red=low circularity, green=high circularity but doesn't define intermediate 
+      gradient (linear RGB interpolation, HSV-based, perceptually uniform colormap). Custom LUT 
+      implementation needed - standard cv2.COLORMAP_* may not provide intuitive red-green mapping
+    impact: |
+      Affects visual interpretability of degradation assessment. Non-linear or perceptually non-uniform 
+      gradient may mislead manual inspection of fractured vs intact particles
+
+  - area: Consolidated CSV schema for batch processing
+    description: |
+      PRD mentions "analisis_gold_standard.csv" with consolidated metrics from 6 images but doesn't 
+      specify schema details (include image source column? particle ID uniqueness across images? 
+      aggregation vs per-particle rows?). Need to define DataFrame structure for multi-image batches
+    impact: |
+      Ambiguous schema complicates statistical analysis pipeline. If particle IDs are not unique 
+      across images, downstream grouping/filtering by image source becomes error-prone
+
+  - area: Circularity threshold for posterior filtering
+    description: |
+      PRD explicitly states "No minimum circularity threshold (export all for posterior filtering)" 
+      but doesn't provide guidance on typical circularity distribution in NMC811 cathode particles. 
+      Without domain knowledge, difficult to validate if calculated circularity values are physically plausible
+    impact: |
+      No impact on implementation (export all as specified) but limits ability to detect 
+      systematic errors in circularity calculation. Validation requires manual inspection of 
+      first results or comparison with literature values
+
+  - area: Morphological refinement interaction with metrics
+    description: |
+      PRD specifies morphological opening operations (erosion + dilation) to separate touching particles 
+      in upstream segmentation module. Unclear if metrics should be calculated on pre-opening or post-opening 
+      masks. Opening operations alter perimeter/area, affecting circularity calculations
+    impact: |
+      If metrics calculated on pre-opening masks, particles may appear merged (lower circularity). 
+      If calculated post-opening, small particles may disappear (area reduction). Need to clarify 
+      pipeline ordering: segmentation → opening → metrics vs segmentation → metrics → opening

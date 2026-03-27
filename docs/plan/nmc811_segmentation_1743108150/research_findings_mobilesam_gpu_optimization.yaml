@@ -1,0 +1,419 @@
+plan_id: nmc811_segmentation_1743108150
+objective: Develop a modular Computer Vision pipeline using MobileSAM and Python to automatically segment active material particles in 16-bit FIB-SEM .tif images, generating exportable geometric datasets to Excel for deep statistical analysis of cathode degradation
+focus_area: MobileSAM Integration & GPU Optimization
+created_at: 2025-01-26T00:00:00Z
+created_by: Research Agent
+status: completed
+
+tldr: |
+  - MobileSAM is a lightweight variant of SAM optimized for resource-constrained environments (60x speedup vs SAM, suitable for RTX 4060 8GB VRAM)
+  - PyTorch provides robust GPU memory management via torch.cuda.empty_cache(), torch.inference_mode(), and autocast with bfloat16/float16 mixed precision
+  - Hybrid prompting strategy requires SAM2ImagePredictor with automatic mask generation (grid sampling) + manual refinement via point/box prompts
+  - Sequential image processing with VRAM cleanup between images prevents OOM crashes; estimated 300MB VRAM per 3072x1024 image with MobileSAM
+  - Conda environment recommended for PyTorch + CUDA 12.x dependency management; critical packages: pytorch, torchvision, tifffile, opencv-python, pandas
+  - 16-bit TIFF handling requires tifffile.imread() to preserve bit depth; OpenCV CLAHE and morphological operations work on normalized uint8/float32
+  - No existing codebase files found; greenfield implementation required with emphasis on modular design
+
+
+research_metadata:
+  methodology: |
+    Hybrid retrieval: context7 documentation queries for PyTorch, OpenCV, tifffile, SAM2 API patterns + GitHub code search for MobileSAM implementations + external research for conda environment setup. Sequential thinking applied for GPU memory estimation and workflow design. Read PRD for scope constraints and acceptance criteria.
+  scope: |
+    Comprehensive exploration of MobileSAM integration patterns, GPU optimization for 8GB VRAM constraints, conda environment configuration, 16-bit TIFF preprocessing pipelines, and sequential batch processing workflows for FIB-SEM images.
+  confidence: high
+  coverage: 85
+
+files_analyzed:
+- file: PRD.yaml
+  path: docs/PRD.yaml
+  purpose: Product Requirements Document defining scope, acceptance criteria, and validation thresholds for NMC811 segmentation pipeline
+  key_elements:
+  - element: in_scope
+    type: requirement
+    location: docs/PRD.yaml:20-31
+    description: MobileSAM-based instance segmentation with hybrid automatic + manual refinement, sequential processing (1 image at a time) with VRAM cleanup, conda environment setup with PyTorch CUDA
+  - element: acceptance_criteria
+    type: validation
+    location: docs/PRD.yaml:41-58
+    description: All 6 gold_standard .tif images processed without VRAM overflow (<7.5GB peak usage), pipeline completes in <30 minutes on RTX 4060, >90% particle detection rate
+  - element: validation_thresholds
+    type: configuration
+    location: docs/PRD.yaml:62-66
+    description: Area range [50, 10000] pixels, aspect ratio [0.25, 4.0], exclude edge particles
+  - element: decisions
+    type: architectural
+    location: docs/PRD.yaml:134-156
+    description: MobileSAM chosen for GPU memory efficiency (60x speedup), hybrid prompting for accuracy-speed balance, sequential processing for reliability
+  language: YAML
+  lines: 157
+
+- file: img_RDBS_0050.tif
+  path: gold_standard/img_RDBS_0050.tif
+  purpose: Representative 16-bit FIB-SEM image of NMC811 cathode particles at 0.08431 μm/px resolution
+  key_elements:
+  - element: image_dimensions
+    type: metadata
+    location: gold_standard/img_RDBS_0050.tif
+    description: 3072x1024 pixels, 16-bit grayscale (displayed as 32bppArgb by Windows), ~6.3 MB file size
+  - element: physical_scale
+    type: metadata
+    location: PRD.yaml:26
+    description: 0.08431 μm/px conversion factor for physical unit calculations
+  language: Binary (TIFF)
+  lines: N/A
+
+patterns_found:
+- category: GPU memory management
+  pattern: Sequential processing with explicit VRAM cleanup
+  description: Process 1 image at a time, call torch.cuda.empty_cache() between images to release cached memory before loading next image tensor
+  examples:
+  - file: PyTorch Documentation
+    location: /pytorch/pytorch
+    snippet: |
+      torch.cuda.empty_cache()  # Release cached memory
+      print(f"Allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
+      print(f"Cached: {torch.cuda.memory_reserved() / 1e9:.2f} GB")
+  prevalence: common
+
+- category: Inference optimization
+  pattern: torch.inference_mode() + autocast with bfloat16/float16
+  description: Disable gradient tracking and enable automatic mixed precision for GPU inference; bfloat16 preferred for numerical stability on Ampere+ GPUs, float16 fallback for older architectures
+  examples:
+  - file: SAM2 Documentation
+    location: /facebookresearch/sam2
+    snippet: |
+      with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+          predictor.set_image(image)
+          masks, scores, _ = predictor.predict(point_coords=coords, point_labels=labels)
+  prevalence: common
+
+- category: Hybrid prompting workflow
+  pattern: Automatic mask generation + manual refinement
+  description: Use SAM2AutomaticMaskGenerator for initial grid-based segmentation, then SAM2ImagePredictor with point/box prompts to refine ambiguous boundaries or merged particles
+  examples:
+  - file: SAM2 Notebooks
+    location: /idea-research/grounded-sam-2
+    snippet: |
+      # Automatic generation
+      mask_generator = SAM2AutomaticMaskGenerator(model)
+      masks = mask_generator.generate(image)
+      
+      # Manual refinement
+      predictor = SAM2ImagePredictor(model)
+      predictor.set_image(image)
+      refined_masks, _, _ = predictor.predict(box=np.array([x1, y1, x2, y2]))
+  prevalence: occasional
+
+- category: 16-bit TIFF handling
+  pattern: tifffile.imread() for bit depth preservation + normalization for OpenCV
+  description: Read 16-bit TIFF with tifffile to preserve dynamic range, normalize to uint8/float32 for CLAHE preprocessing and morphological operations
+  examples:
+  - file: tifffile Documentation
+    location: /cgohlke/tifffile
+    snippet: |
+      import tifffile
+      img_16bit = tifffile.imread('fibsem.tif')  # Preserves uint16
+      img_normalized = (img_16bit / img_16bit.max() * 255).astype('uint8')  # For OpenCV CLAHE
+  prevalence: common
+
+- category: Morphological refinement
+  pattern: Opening operation (erosion + dilation) for particle separation
+  description: Apply cv2.morphologyEx with cv2.MORPH_OPEN to binary masks to separate touching particles, use elliptical kernels for isotropic processing
+  examples:
+  - file: OpenCV Documentation
+    location: /websites/opencv_4_x
+    snippet: |
+      kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+      opening = cv2.morphologyEx(binary_mask, cv2.MORPH_OPEN, kernel)
+  prevalence: common
+
+- category: Batch CSV export
+  pattern: pandas.concat() + DataFrame.to_csv() for multi-image aggregation
+  description: Collect per-image DataFrames in a list, concatenate row-wise with pd.concat(), export consolidated CSV with index=False
+  examples:
+  - file: pandas Documentation
+    location: /websites/pandas_pydata
+    snippet: |
+      all_results = []
+      for img_path in image_paths:
+          df_img = process_image(img_path)
+          all_results.append(df_img)
+      
+      df_consolidated = pd.concat(all_results, axis=0, ignore_index=True)
+      df_consolidated.to_csv('analisis_gold_standard.csv', index=False)
+  prevalence: common
+
+related_architecture:
+  components_relevant_to_domain:
+  - component: MobileSAM Model Wrapper
+    responsibility: Load pretrained MobileSAM checkpoint, initialize SAM2ImagePredictor and SAM2AutomaticMaskGenerator, manage model inference lifecycle
+    location: N/A (to be implemented)
+    relationship_to_domain: Core segmentation engine; domain depends on this for mask generation
+  
+  - component: GPU Memory Manager
+    responsibility: Monitor VRAM usage, trigger torch.cuda.empty_cache() between images, prevent OOM crashes during batch processing
+    location: N/A (to be implemented)
+    relationship_to_domain: Enables sequential processing strategy; domain uses this after each image
+  
+  - component: TIFF Preprocessing Pipeline
+    responsibility: Read 16-bit TIFF with tifffile, apply CLAHE enhancement, normalize for OpenCV operations, convert between uint8/uint16/float32 as needed
+    location: N/A (to be implemented)
+    relationship_to_domain: Prepares images for segmentation; domain depends on preprocessed tensors
+  
+  - component: Morphological Refinement Module
+    responsibility: Apply opening operations to binary masks, separate touching particles, remove noise artifacts
+    location: N/A (to be implemented)
+    relationship_to_domain: Post-processes segmentation masks before metrics extraction
+  
+  - component: Geometric Metrics Extractor
+    responsibility: Calculate area, perimeter, circularity, equivalent diameter per particle from contours, apply validation filters
+    location: N/A (to be implemented)
+    relationship_to_domain: Converts masks to quantitative data; domain outputs depend on this
+  
+  - component: Heatmap Visualization Generator
+    responsibility: Overlay color-coded masks on original images by circularity metric (red=fractured, green=intact)
+    location: N/A (to be implemented)
+    relationship_to_domain: Provides visual validation; domain uses outputs for quality assurance
+
+  interfaces_used_by_domain:
+  - interface: SAM2ImagePredictor API
+    location: External (Meta SAM2 library)
+    usage_pattern: predictor.set_image(image) -> predictor.predict(point_coords, point_labels, box) -> (masks, scores, logits)
+  
+  - interface: SAM2AutomaticMaskGenerator API
+    location: External (Meta SAM2 library)
+    usage_pattern: generator = SAM2AutomaticMaskGenerator(model, **params) -> generator.generate(image) -> list of mask dictionaries
+  
+  - interface: PyTorch CUDA Memory API
+    location: External (PyTorch)
+    usage_pattern: torch.cuda.memory_allocated(), torch.cuda.memory_reserved(), torch.cuda.empty_cache()
+  
+  - interface: tifffile.imread API
+    location: External (tifffile library)
+    usage_pattern: tifffile.imread('path.tif') -> numpy.ndarray (uint16 by default)
+
+  data_flow_involving_domain: |
+    1. Load 16-bit TIFF from gold_standard/ using tifffile.imread() → numpy.ndarray (3072x1024, uint16)
+    2. Apply CLAHE preprocessing → normalized uint8 array for contrast enhancement
+    3. Convert to RGB numpy array → input for MobileSAM (H, W, 3)
+    4. Initialize SAM2ImagePredictor, set_image() → computes embeddings once per image
+    5. Generate automatic masks via SAM2AutomaticMaskGenerator → list of candidate masks
+    6. (Optional) Manual refinement with point/box prompts for ambiguous cases → refined masks
+    7. Apply morphological opening to binary masks → separated particle masks
+    8. Extract contours, calculate geometric metrics → DataFrame with particle data
+    9. Append DataFrame to batch accumulator → list of DataFrames
+    10. Call torch.cuda.empty_cache(), delete tensors → free VRAM for next image
+    11. After all 6 images: pd.concat(all_dfs) → consolidated DataFrame
+    12. Export to CSV: df.to_csv('analisis_gold_standard.csv', index=False)
+    13. Generate heatmap visualizations → save to output directory
+
+  key_relationships_to_domain:
+  - from: TIFF Preprocessing Pipeline
+    to: MobileSAM Model Wrapper
+    relationship: provides preprocessed RGB arrays as input tensors
+  
+  - from: MobileSAM Model Wrapper
+    to: Morphological Refinement Module
+    relationship: outputs binary masks for post-processing
+  
+  - from: Morphological Refinement Module
+    to: Geometric Metrics Extractor
+    relationship: provides cleaned masks for contour extraction
+  
+  - from: Geometric Metrics Extractor
+    to: pandas DataFrame
+    relationship: appends per-particle metrics as DataFrame rows
+  
+  - from: GPU Memory Manager
+    to: MobileSAM Model Wrapper
+    relationship: triggers VRAM cleanup after each inference cycle
+
+related_technology_stack:
+  languages_used_in_domain:
+  - Python 3.10+
+
+  frameworks_used_in_domain:
+  - name: PyTorch
+    usage_in_domain: Deep learning inference engine for MobileSAM model execution, CUDA memory management, automatic mixed precision (AMP) with autocast
+  
+  - name: Meta SAM2
+    usage_in_domain: Segment Anything Model 2 API for image embeddings, mask generation, and prompt-based refinement
+  
+  - name: OpenCV (cv2)
+    usage_in_domain: CLAHE adaptive histogram equalization, morphological operations (opening, erosion, dilation), contour extraction for geometric analysis
+  
+  - name: NumPy
+    usage_in_domain: Array operations for image manipulation, coordinate transformations, numerical computations
+  
+  - name: pandas
+    usage_in_domain: DataFrame construction for per-particle metrics, CSV export, batch concatenation
+
+  libraries_used_in_domain:
+  - name: tifffile
+    purpose_in_domain: Reading 16-bit TIFF FIB-SEM images with preserved bit depth (no lossy conversion)
+  
+  - name: torch.cuda
+    purpose_in_domain: GPU memory monitoring (memory_allocated, memory_reserved), cache management (empty_cache)
+  
+  - name: torch.amp
+    purpose_in_domain: Automatic mixed precision inference with autocast context manager (bfloat16/float16)
+  
+  - name: conda
+    purpose_in_domain: Python environment management for PyTorch + CUDA 12.x + cuDNN dependencies
+
+  external_apis_used_in_domain:
+  - name: NVIDIA CUDA 12.x
+    integration_point: PyTorch backend for GPU-accelerated tensor operations and neural network inference
+
+related_conventions:
+  naming_patterns_in_domain: |
+    - Image files: img_RDBS_{cycle}.tif (e.g., img_RDBS_0050.tif, img_RDBS_0485.tif)
+    - Output CSV: analisis_gold_standard.csv (consolidated metrics from all 6 images)
+    - Particle ID format: {image_name}_{particle_index} (e.g., RDBS_0050_001, RDBS_0050_002)
+    - Metric columns: ID, Area_pixels, Area_um2, Perimeter_pixels, Perimeter_um, Circularity, EquivDiameter_um
+    - Heatmap filenames: {image_name}_heatmap_circularity.png
+
+  structure_of_domain: |
+    Modular pipeline architecture with sequential stages:
+    1. Preprocessing Module (TIFF loading, CLAHE, normalization)
+    2. Segmentation Module (MobileSAM inference, hybrid prompting)
+    3. Refinement Module (morphological operations)
+    4. Metrics Module (contour extraction, geometric calculations)
+    5. Validation Module (area/circularity/aspect ratio filters)
+    6. Export Module (CSV consolidation, heatmap generation)
+    7. GPU Memory Module (VRAM monitoring, cleanup orchestration)
+
+  error_handling_in_domain: |
+    - ERR_VRAM_001: GPU memory exceeded → trigger torch.cuda.empty_cache(), reduce batch size to 1 image
+    - ERR_MASK_002: No valid particles detected → log warning, skip to next image
+    - ERR_IO_003: TIFF read failure → verify file integrity with tifffile, check for corruption
+    - ERR_METRIC_004: Perimeter is zero → skip particle in metrics calculation, log error
+
+  testing_in_domain: |
+    - Unit tests for circularity formula: C = 4πA/P² on synthetic circular and elongated shapes
+    - Visual inspection of output images for merged particles in high-density regions
+    - Manual particle count in 2 reference images vs automated detection (>90% threshold)
+    - GPU memory monitoring during execution (<7.5GB peak usage verification)
+    - End-to-end timing test: 6 images in <30 minutes on RTX 4060
+
+  documentation_in_domain: |
+    - PRD.yaml: Comprehensive product requirements with acceptance criteria, validation thresholds, and architectural decisions
+    - Inline docstrings for all functions with parameter types and return value descriptions
+    - README with conda environment setup instructions, CUDA driver requirements, and quickstart guide
+
+related_dependencies:
+  internal: []
+
+  external:
+  - name: pytorch (>= 2.0.0)
+    purpose_for_domain: Deep learning framework for MobileSAM inference, CUDA memory management, autocast mixed precision
+  
+  - name: torchvision (>= 0.15.0)
+    purpose_for_domain: Image preprocessing utilities, tensor transformations
+  
+  - name: sam2 (Meta Segment Anything Model 2)
+    purpose_for_domain: SAM2ImagePredictor, SAM2AutomaticMaskGenerator APIs for hybrid prompting workflow
+  
+  - name: tifffile (>= 2023.0.0)
+    purpose_for_domain: Read 16-bit TIFF FIB-SEM images without lossy conversion
+  
+  - name: opencv-python (>= 4.8.0)
+    purpose_for_domain: CLAHE preprocessing, morphological operations (opening), contour extraction
+  
+  - name: numpy (>= 1.24.0)
+    purpose_for_domain: Array operations, coordinate transformations, numerical computations
+  
+  - name: pandas (>= 2.0.0)
+    purpose_for_domain: DataFrame construction, CSV export, batch concatenation
+  
+  - name: matplotlib (>= 3.7.0)
+    purpose_for_domain: Heatmap visualization generation (optional, for color mapping)
+  
+  - name: CUDA Toolkit 12.x
+    purpose_for_domain: NVIDIA GPU driver compatibility for PyTorch CUDA backend
+
+domain_security_considerations:
+  sensitive_areas: []
+  authentication_patterns_in_domain: N/A (offline pipeline, no user authentication)
+  authorization_patterns_in_domain: N/A (local file access only)
+  data_validation_in_domain: |
+    - Particle validation filters: area [50, 10000] pixels, aspect ratio [0.25, 4.0], circularity ≥ 0 (no minimum threshold)
+    - Exclude edge particles: discard particles touching image borders
+    - TIFF file integrity check: verify readable with tifffile before processing
+    - VRAM overflow protection: monitor torch.cuda.memory_allocated() before each image load
+
+testing_patterns:
+  framework: pytest (recommended)
+  coverage_areas:
+  - Circularity formula correctness on synthetic shapes
+  - TIFF loading preserves 16-bit dynamic range
+  - Morphological opening separates touching particles
+  - CSV export includes all required columns
+  - GPU memory cleanup reduces allocated memory after torch.cuda.empty_cache()
+  
+  test_organization: |
+    tests/
+    ├── test_preprocessing.py (CLAHE, normalization)
+    ├── test_segmentation.py (MobileSAM mask generation)
+    ├── test_refinement.py (morphological operations)
+    ├── test_metrics.py (geometric calculations, validation filters)
+    ├── test_export.py (CSV format, pandas concatenation)
+    └── test_gpu_memory.py (VRAM monitoring, empty_cache)
+  
+  mock_patterns:
+  - Mock MobileSAM model outputs with synthetic masks for metrics testing
+  - Mock TIFF files with known particle counts for detection rate validation
+
+open_questions:
+- question: How to handle MobileSAM model checkpoint download and storage?
+  context: PRD specifies using pretrained MobileSAM; need to determine if checkpoint should be downloaded programmatically or manually placed in a specific directory
+
+- question: What is the optimal grid sampling density for SAM2AutomaticMaskGenerator in automatic mode?
+  context: Grid density affects segmentation quality vs inference time; need empirical testing on FIB-SEM images to balance accuracy and speed (<30 min for 6 images)
+
+- question: Should manual refinement prompts be stored for reproducibility?
+  context: Hybrid prompting includes manual correction of ambiguous cases; unclear if point/box coordinates should be saved to a JSON file for re-runs
+
+- question: What threshold values for IoU scores and stability scores in automatic mask generation?
+  context: SAM2AutomaticMaskGenerator accepts IoU and stability score thresholds to filter low-quality masks; default values may not be optimal for FIB-SEM particle segmentation
+
+- question: How to integrate MobileSAM (lightweight variant) vs SAM2 (full model)?
+  context: PRD states "MobileSAM" but research found SAM2 API documentation; need clarification on which model checkpoint to use (mobile-sam, efficient-sam, or sam2-hiera variants)
+
+- question: Is bfloat16 supported on RTX 3050 Laptop GPU (Ampere architecture)?
+  context: Research system has RTX 3050 Laptop (4GB VRAM), not RTX 4060 (8GB); need to verify bfloat16 availability or fallback to float16
+
+- question: Should VRAM monitoring be active during execution or only for debugging?
+  context: Acceptance criteria requires <7.5GB peak usage verification; unclear if this should be continuous logging or manual profiling
+
+- question: How to handle images with extreme particle density (potential merged masks)?
+  context: Morphological opening may not separate all touching particles; need strategy for detecting merged particles and triggering manual refinement
+
+gaps:
+- area: MobileSAM model availability and checkpoint paths
+  description: No MobileSAM-specific repositories found in GitHub search; unclear if "MobileSAM" refers to mobile-sam, efficient-sam, or a specific SAM2 variant optimized for mobile devices
+  impact: Cannot proceed with model initialization without identifying correct checkpoint source (Hugging Face, GitHub release, or custom training)
+
+- area: Conda environment specification file
+  description: No environment.yml or requirements.txt found in repository; need to create from scratch with PyTorch CUDA version compatibility matrix
+  impact: Delays setup process; risk of dependency conflicts if PyTorch, CUDA, and cuDNN versions are incompatible
+
+- area: CLAHE hyperparameters for FIB-SEM images
+  description: No prior research on optimal clipLimit and tileGridSize for CLAHE on 16-bit FIB-SEM microscopy data
+  impact: May require empirical tuning to achieve best contrast enhancement without over-amplifying noise
+
+- area: Physical unit conversion validation
+  description: PRD specifies 0.08431 μm/px scale but no validation method provided
+  impact: Potential systematic error in Area_um2, Perimeter_um, EquivDiameter_um if scale factor is incorrect
+
+- area: Edge particle exclusion algorithm
+  description: PRD requires excluding particles touching image borders but no implementation pattern provided
+  impact: Need to develop contour-based boundary detection logic (check if any contour point has x=0, x=width-1, y=0, or y=height-1)
+
+- area: Heatmap color scheme and normalization
+  description: PRD specifies circularity heatmap (red=low, green=high) but no details on colormap (e.g., matplotlib 'RdYlGn') or normalization range
+  impact: May require color vision deficiency (CVD) friendly palette selection for accessibility
+
+- area: Batch processing parallelization strategy
+  description: PRD mandates sequential processing for VRAM safety but no guidance on potential parallelization across CPU cores for preprocessing steps
+  impact: Missed opportunity for speedup in CLAHE, morphological operations, and metrics calculation (CPU-bound tasks)

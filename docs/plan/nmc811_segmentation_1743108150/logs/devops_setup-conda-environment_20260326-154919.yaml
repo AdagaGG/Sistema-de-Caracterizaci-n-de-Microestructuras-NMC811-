@@ -1,0 +1,17 @@
+status: failed
+task_id: setup-conda-environment
+plan_id: nmc811_segmentation_1743108150
+failure_type: fixable
+reason: Conda executable is not installed or not discoverable in PATH; environment creation and CUDA runtime validation could not be executed.
+preflight:
+  conda_found: false
+  python_found: false
+  nvidia_smi_gpu: NVIDIA GeForce RTX 3050 Laptop GPU
+  nvidia_smi_driver: '595.79'
+  nvidia_smi_memory: '4096 MiB'
+  docker_found: true
+  kubectl_found: true
+mitigation:
+  - Install Miniconda or Anaconda for current user.
+  - Re-run: conda env create -f environment.yml
+  - Re-run torch/cuda and import verification commands from troubleshooting notes.

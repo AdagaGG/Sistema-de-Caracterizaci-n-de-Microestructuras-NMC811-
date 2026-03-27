@@ -1,0 +1,31 @@
+{
+  "status": "provisional_pending_manual",
+  "plan_id": "nmc811_segmentation_1743108150",
+  "criterion": "Particle detection accuracy validation (>90% detection rate)",
+  "automated_counts": {
+    "img_RDBS_0050": 158,
+    "img_RDBS_0485": 167
+  },
+  "manual_counts": null,
+  "detection_rate": null,
+  "methodology": {
+    "description": "Provisional baseline generated from automated final pipeline outputs; manual reference counting still pending. Detection rate cannot be computed until manual counts are supplied for both reference images.",
+    "command": "C:\\\\Users\\\\adria\\\\miniconda3\\\\Scripts\\\\conda.exe run -n nmc811-segmentation python -m src.main --input-dir gold_standard --output-dir docs\\\\plan\\\\nmc811_segmentation_1743108150\\\\evidence\\\\execute-validation-testing_final\\\\full_pipeline --checkpoint-path weights/mobile_sam.pt --device cuda:0 --no-progress --log-file docs\\\\plan\\\\nmc811_segmentation_1743108150\\\\evidence\\\\execute-validation-testing_final\\\\full_pipeline\\\\runtime_execution.jsonl",
+    "sources": [
+      "docs/plan/nmc811_segmentation_1743108150/evidence/execute-validation-testing_final/full_pipeline/stdout.json",
+      "docs/plan/nmc811_segmentation_1743108150/evidence/execute-validation-testing_final/full_pipeline/perf_metrics.json",
+      "docs/plan/nmc811_segmentation_1743108150/evidence/execute-validation-testing_final/full_pipeline/runtime_execution.jsonl",
+      "docs/plan/nmc811_segmentation_1743108150/evidence/execute-validation-testing_final/full_pipeline/img_RDBS_0050/analisis_gold_standard.csv",
+      "docs/plan/nmc811_segmentation_1743108150/evidence/execute-validation-testing_final/full_pipeline/img_RDBS_0485/analisis_gold_standard.csv",
+      "docs/plan/nmc811_segmentation_1743108150/plan_c.yaml#validation_matrix"
+    ]
+  },
+  "finalize_instructions": [
+    "Provide manual particle counts for img_RDBS_0050 and img_RDBS_0485.",
+    "Compute per-image detection_rate = automated_count / manual_count.",
+    "Compute aggregate_detection_rate as the mean of the two per-image detection rates (or weighted by manual totals if project policy requires).",
+    "Set status to finalized once manual counts are entered and criterion pass/fail is resolved against the >90% PRD threshold.",
+    "Update acceptance_matrix_status.json to change this criterion from pending_manual_validation to passed/failed."
+  ],
+  "created_at_utc": "2026-03-27T04:10:08.8485570Z"
+}

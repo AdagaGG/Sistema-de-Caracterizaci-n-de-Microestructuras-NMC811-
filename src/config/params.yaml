@@ -1,0 +1,10 @@
+preprocessing:
+  clahe:
+    clip_limit: 3.0
+    tile_grid_size:
+    - 10
+    - 10
+postprocessing:
+  morphology:
+    kernel_shape: ellipse
+    kernel_size: 3

@@ -1,0 +1,92 @@
+task_id: tune-morphology-parameters
+plan_id: nmc811_segmentation_1743108150
+search_space:
+  kernel_shapes:
+  - ellipse
+  - rect
+  - cross
+  kernel_sizes:
+  - 3
+  - 5
+  - 7
+  representative_count: 6
+representative_images:
+- img_RDBS_0050.tif
+- img_RDBS_0100.tif
+- img_RDBS_0200.tif
+- img_RDBS_0300.tif
+- img_RDBS_0400.tif
+- img_RDBS_0485.tif
+selected_parameters:
+  kernel_shape: ellipse
+  kernel_size: 3
+  quality_score: 0.316655
+  separation_score: 0.0
+  erosion_penalty: 0.007762
+selection_rationale: Selected highest robust quality score (separation benefit minus
+  erosion risk and cross-image instability), with ellipse preference and mid-size
+  tie-break for guarded defaults.
+evaluated_variants:
+- kernel_shape: ellipse
+  kernel_size: 3
+  quality_score: 0.316655
+  separation_score: 0.0
+  erosion_penalty: 0.007762
+  mean_quality: 0.317516
+  quality_std: 0.002459
+- kernel_shape: cross
+  kernel_size: 3
+  quality_score: 0.316655
+  separation_score: 0.0
+  erosion_penalty: 0.007762
+  mean_quality: 0.317516
+  quality_std: 0.002459
+- kernel_shape: rect
+  kernel_size: 3
+  quality_score: 0.314816
+  separation_score: 0.0
+  erosion_penalty: 0.012213
+  mean_quality: 0.316092
+  quality_std: 0.003646
+- kernel_shape: cross
+  kernel_size: 5
+  quality_score: 0.313872
+  separation_score: 0.0
+  erosion_penalty: 0.015756
+  mean_quality: 0.314958
+  quality_std: 0.003103
+- kernel_shape: ellipse
+  kernel_size: 5
+  quality_score: 0.312369
+  separation_score: 0.0
+  erosion_penalty: 0.019062
+  mean_quality: 0.3139
+  quality_std: 0.004374
+- kernel_shape: rect
+  kernel_size: 5
+  quality_score: 0.309077
+  separation_score: 0.0
+  erosion_penalty: 0.028037
+  mean_quality: 0.311028
+  quality_std: 0.005574
+- kernel_shape: cross
+  kernel_size: 7
+  quality_score: 0.30835
+  separation_score: 0.0
+  erosion_penalty: 0.03136
+  mean_quality: 0.309965
+  quality_std: 0.004612
+- kernel_shape: ellipse
+  kernel_size: 7
+  quality_score: 0.307278
+  separation_score: 0.0
+  erosion_penalty: 0.033161
+  mean_quality: 0.309388
+  quality_std: 0.006029
+- kernel_shape: rect
+  kernel_size: 7
+  quality_score: 0.299452
+  separation_score: 0.0
+  erosion_penalty: 0.054749
+  mean_quality: 0.30248
+  quality_std: 0.008653

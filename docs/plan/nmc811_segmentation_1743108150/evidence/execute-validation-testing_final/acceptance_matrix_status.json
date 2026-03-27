@@ -1,0 +1,50 @@
+{
+  "plan_id": "nmc811_segmentation_1743108150",
+  "evidence_root": "docs/plan/nmc811_segmentation_1743108150/evidence/execute-validation-testing_final",
+  "acceptance_matrix": [
+    {
+      "criterion": "VRAM usage <7.5GB, no OOM crashes",
+      "status": "passed",
+      "blocking_scope": "none",
+      "notes": "Peak VRAM 3.799 GB per full_pipeline/perf_metrics.json",
+      "evidence": [
+        "docs/plan/nmc811_segmentation_1743108150/evidence/execute-validation-testing_final/full_pipeline/perf_metrics.json"
+      ]
+    },
+    {
+      "criterion": "Total execution time <30 minutes on RTX 4060",
+      "status": "passed",
+      "blocking_scope": "none",
+      "notes": "Pipeline elapsed 352.652s (~5.88 min)",
+      "evidence": [
+        "docs/plan/nmc811_segmentation_1743108150/evidence/execute-validation-testing_final/full_pipeline/perf_metrics.json"
+      ]
+    },
+    {
+      "criterion": "Error contract tests pass",
+      "status": "passed",
+      "blocking_scope": "none",
+      "notes": "Pytest exit code indicates pass",
+      "evidence": [
+        "docs/plan/nmc811_segmentation_1743108150/evidence/execute-validation-testing_final/error_contract_tests/exit_code.txt",
+        "docs/plan/nmc811_segmentation_1743108150/evidence/execute-validation-testing_final/error_contract_tests/pytest_output.txt",
+        "docs/plan/nmc811_segmentation_1743108150/evidence/execute-validation-testing_final/error_contract_tests/pytest_junit.xml"
+      ]
+    },
+    {
+      "criterion": "Particle detection rate >90% (PRD acceptance criterion)",
+      "status": "pending_manual_validation",
+      "blocking_scope": "strict_prd_full_pass_only",
+      "notes": "Automated reference counts captured (img_RDBS_0050=158, img_RDBS_0485=167). Manual counts pending; detection rate not yet computed.",
+      "evidence": [
+        "docs/plan/nmc811_segmentation_1743108150/evidence/execute-validation-testing_final/detection_rate_reference_provisional.json"
+      ]
+    }
+  ],
+  "closure_gating": {
+    "runtime_closure": "not_blocked",
+    "code_quality_closure": "not_blocked",
+    "strict_prd_full_pass_label": "blocked_until_manual_detection_validation"
+  },
+  "updated_at_utc": "2026-03-27T04:10:08.8549541Z"
+}

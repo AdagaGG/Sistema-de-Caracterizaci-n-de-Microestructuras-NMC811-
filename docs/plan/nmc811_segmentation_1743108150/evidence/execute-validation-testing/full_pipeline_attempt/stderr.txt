@@ -1,0 +1,22 @@
+Traceback (most recent call last):
+  File "C:\Users\adria\miniconda3\envs\nmc811-segmentation\lib\runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "C:\Users\adria\miniconda3\envs\nmc811-segmentation\lib\runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "C:\Users\adria\Desktop\Proyectos Personales\Sistema de Caracterizaci├│n de Microestructuras (NMC811)\src\main.py", line 313, in <module>
+    raise SystemExit(main())
+  File "C:\Users\adria\Desktop\Proyectos Personales\Sistema de Caracterizaci├│n de Microestructuras (NMC811)\src\main.py", line 194, in main
+    segmentation_core = _build_segmentation_core(args)
+  File "C:\Users\adria\Desktop\Proyectos Personales\Sistema de Caracterizaci├│n de Microestructuras (NMC811)\src\main.py", line 126, in _build_segmentation_core
+    return MobileSamInferenceCore.from_config(
+  File "C:\Users\adria\Desktop\Proyectos Personales\Sistema de Caracterizaci├│n de Microestructuras (NMC811)\src\segmentation\mobilesam_inference.py", line 72, in from_config
+    model = loader(model_config)
+  File "C:\Users\adria\Desktop\Proyectos Personales\Sistema de Caracterizaci├│n de Microestructuras (NMC811)\src\segmentation\mobilesam_inference.py", line 241, in default_model_loader
+    mobile_sam = importlib.import_module("mobile_sam")
+  File "C:\Users\adria\miniconda3\envs\nmc811-segmentation\lib\importlib\__init__.py", line 126, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+  File "<frozen importlib._bootstrap>", line 1050, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1027, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1004, in _find_and_load_unlocked
+ModuleNotFoundError: No module named 'mobile_sam'
+ERROR conda.cli.main_run:execute(142): `conda run python -m src.main --input-dir gold_standard --output-dir docs\plan\nmc811_segmentation_1743108150\evidence\execute-validation-testing\full_pipeline_attempt --checkpoint-path weights/mobile_sam.pt --device cuda:0 --no-progress --log-file docs\plan\nmc811_segmentation_1743108150\evidence\execute-validation-testing\full_pipeline_attempt\runtime_execution.jsonl` failed. (See above for error)

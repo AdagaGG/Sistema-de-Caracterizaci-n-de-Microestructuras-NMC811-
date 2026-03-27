@@ -1,0 +1,986 @@
+plan_id: nmc811_segmentation_1743108150
+objective: Develop a modular Computer Vision pipeline using MobileSAM and Python to automatically segment active material particles in 16-bit FIB-SEM .tif images, generating exportable geometric datasets to Excel for deep statistical analysis of cathode degradation
+created_at: "2025-01-26T00:00:00Z"
+created_by: gem-planner
+status: pending_approval
+research_confidence: high
+
+plan_metrics:
+  wave_1_task_count: 3
+  total_dependencies: 37
+  risk_score: medium
+
+tldr: |
+  Plan B v2 preserves the same objective and constraints while correcting reviewer failures.
+  Oversized tasks were split into atomic units (<=300 estimated_lines): MobileSAM integration, orchestrator, and documentation.
+  PRD error codes are now explicitly implemented and tested end-to-end:
+  - ERR_VRAM_001 (segmentation VRAM overflow)
+  - ERR_MASK_002 (no valid particles after filters)
+  - ERR_IO_003 (16-bit TIFF read failure)
+  - ERR_METRIC_004 (zero-perimeter circularity failure)
+  DAG validity is preserved and early parallelism remains high with 3 independent wave-1 tasks.
+
+open_questions:
+  - Optimal CLAHE parameters (clip_limit, tile_grid_size) for FIB-SEM images require empirical tuning on gold_standard dataset
+  - Structuring element shape/size for morphological opening needs validation (elliptical 3x3 vs 5x5 vs 7x7)
+  - MobileSAM grid sampling density tradeoff between accuracy and <30min performance target
+  - Manual refinement prompt storage strategy for reproducibility across research iterations
+
+pre_mortem:
+  overall_risk_level: medium
+  critical_failure_modes:
+    - scenario: VRAM overflow during segmentation still appears under dense masks despite sequential processing
+      likelihood: medium
+      impact: high
+      mitigation: Enforce per-image cleanup, peak VRAM telemetry, and deterministic ERR_VRAM_001 emission with fallback policy
+    - scenario: Validation thresholds remove all particles on low-contrast images
+      likelihood: medium
+      impact: high
+      mitigation: Log threshold decisions, capture rejection statistics, emit ERR_MASK_002 with PRD message, and support parameter rollback
+    - scenario: Circularity computation crashes on degenerate contours
+      likelihood: low
+      impact: medium
+      mitigation: Guard perimeter==0 path and emit ERR_METRIC_004 while continuing pipeline execution
+  assumptions:
+    - RTX 4060 GPU with 8GB VRAM is available and properly configured with CUDA 12.x drivers
+    - Gold standard images (6x 16-bit TIFFs at ~3072x1024 resolution) are representative of target dataset
+    - Pretrained MobileSAM checkpoint is available locally
+    - Sequential one-image-at-a-time processing is required and preferred over multi-image batching
+
+implementation_specification:
+  code_structure: |
+    src/
+      config/
+        params.yaml
+        mobilesam_config.yaml
+      preprocessing/
+        tiff_loader.py
+        clahe_enhancer.py
+      segmentation/
+        mobilesam_wrapper.py
+        mask_generator.py
+        vram_controls.py
+        manual_refiner.py
+      postprocessing/
+        morphology_ops.py
+        edge_handler.py
+      metrics/
+        geometry_extractor.py
+        validation_filter.py
+      visualization/
+        heatmap_generator.py
+        overlay_renderer.py
+      export/
+        csv_exporter.py
+      pipeline/
+        orchestrator_engine.py
+      utils/
+        error_codes.py
+        logger.py
+      main.py
+  affected_areas:
+    - docs/PRD.yaml (error code alignment as source of truth)
+    - src/preprocessing
+    - src/segmentation
+    - src/postprocessing
+    - src/metrics
+    - src/visualization
+    - src/export
+    - src/pipeline
+    - docs/
+  component_details:
+    - component: Error Code Catalog
+      responsibility: Provide canonical PRD-aligned code/message map and exception helpers
+      interfaces:
+        - get_error(code: str) -> dict
+        - raise_prd_error(code: str, context: dict) -> Exception
+    - component: Segmentation Engine
+      responsibility: Generate particle masks with MobileSAM and enforce VRAM-safe inference loop
+      interfaces:
+        - generate_masks_auto(image: ndarray) -> list[dict]
+        - refine_masks_manual(image: ndarray, prompts: list) -> list[dict]
+    - component: Validation and Metrics
+      responsibility: Extract geometric metrics, apply filters, and emit deterministic failures on invalid states
+      interfaces:
+        - extract_metrics(mask_labels: ndarray) -> DataFrame
+        - filter_particles(df: DataFrame, criteria: dict) -> DataFrame
+    - component: Pipeline Orchestrator
+      responsibility: Execute state-machine order per image and aggregate batch outputs
+      interfaces:
+        - run_batch(input_dir: str, output_dir: str, config: dict) -> dict
+  dependencies:
+    - component: Segmentation Engine
+      relationship: depends on preprocessing output and error-code catalog
+    - component: Morphology + Metrics
+      relationship: depends on segmentation mask contract
+    - component: Validation + Export + Visualization
+      relationship: depends on metrics output contract
+    - component: Orchestrator
+      relationship: composes all modules and handles PRD error propagation/reporting
+  integration_points:
+    - Sequential image processing loop in orchestrator (raw -> preprocessed -> segmented -> refined -> analyzed -> exported)
+    - GPU memory safety hooks after each image (cleanup + telemetry)
+    - PRD error mapping integration: ERR_VRAM_001, ERR_MASK_002, ERR_IO_003, ERR_METRIC_004 emitted by owning modules and asserted by tests
+
+contracts:
+  - from_task: implement-error-code-catalog
+    to_task: implement-preprocessing-pipeline
+    interface: Canonical PRD errors for IO failure handling
+    format: Python dict + exception helper carrying code/message/context
+  - from_task: implement-error-code-catalog
+    to_task: integrate-mobilesam-controls
+    interface: Canonical PRD errors for VRAM overflow handling
+    format: Python dict + exception helper carrying code/message/context
+  - from_task: implement-error-code-catalog
+    to_task: extract-geometric-metrics
+    interface: Canonical PRD errors for perimeter-zero metric handling
+    format: Python dict + exception helper carrying code/message/context
+  - from_task: implement-error-code-catalog
+    to_task: implement-validation-filters
+    interface: Canonical PRD errors for empty valid-mask outcomes
+    format: Python dict + exception helper carrying code/message/context
+  - from_task: setup-conda-environment
+    to_task: integrate-mobilesam-inference
+    interface: Functional CUDA-capable runtime environment
+    format: Activated conda env with torch.cuda.is_available()==True
+  - from_task: implement-preprocessing-pipeline
+    to_task: integrate-mobilesam-inference
+    interface: Preprocessed uint8 images ready for model input
+    format: NumPy ndarray (H,W,C) in [0,255]
+  - from_task: integrate-mobilesam-inference
+    to_task: implement-morphological-refinement
+    interface: Automatic mask payloads
+    format: list[{segmentation, area, bbox}]
+  - from_task: implement-morphological-refinement
+    to_task: extract-geometric-metrics
+    interface: Refined connected-components labels
+    format: int32 labeled mask with 0 background
+  - from_task: extract-geometric-metrics
+    to_task: implement-validation-filters
+    interface: Raw metrics dataframe
+    format: pandas DataFrame with area/perimeter/circularity/aspect_ratio
+  - from_task: implement-validation-filters
+    to_task: generate-heatmap-visualizations
+    interface: Valid particle subset
+    format: pandas DataFrame with validation_status and rejection_reason
+  - from_task: implement-validation-filters
+    to_task: consolidate-csv-export
+    interface: Per-image filtered metrics
+    format: list[pandas DataFrame]
+  - from_task: integrate-mobilesam-controls
+    to_task: build-orchestrator-engine
+    interface: VRAM-safe segmentation and manual refinement controls
+    format: callable methods + structured VRAM telemetry
+  - from_task: build-orchestrator-engine
+    to_task: build-orchestrator-runtime-entrypoint
+    interface: Engine API for CLI wrapper
+    format: run_batch(input_dir, output_dir, config)->summary dict
+  - from_task: implement-error-code-tests
+    to_task: execute-validation-testing
+    interface: Automated assertions for all PRD codes/messages
+    format: test report with pass/fail by code
+
+tasks:
+  - id: setup-conda-environment
+    title: Create isolated conda environment with PyTorch CUDA and Computer Vision dependencies
+    description: |
+      Set up reproducible Python environment with CUDA-compatible PyTorch and required CV libraries.
+      Validate torch GPU access and baseline VRAM allocation/release behavior.
+    wave: 1
+    agent: gem-devops
+    priority: high
+    status: pending
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: In-scope environment and dependency requirements
+    estimated_effort: small
+    estimated_files: 2
+    estimated_lines: 150
+    focus_area: null
+    verification:
+      - Conda environment activates without errors
+      - torch.cuda.is_available() returns True
+      - Core imports pass (tifffile, cv2, skimage, pandas)
+    acceptance_criteria:
+      - environment.yml includes pinned core versions
+      - CUDA troubleshooting notes included
+    failure_modes:
+      - scenario: CUDA/PyTorch mismatch blocks GPU inference
+        likelihood: medium
+        impact: high
+        mitigation: Pin compatible CUDA runtime build and document fallback matrix
+    tech_stack:
+      - Conda
+      - PyTorch
+      - CUDA
+    test_coverage: Environment smoke tests for package imports and GPU visibility
+    requires_review: false
+    review_depth: null
+    review_security_sensitive: false
+    environment: development
+    requires_approval: false
+    devops_security_sensitive: false
+
+  - id: design-visualization-system
+    title: Design circularity heatmap mapping and overlay strategy
+    description: |
+      Define visualization contract for red=fractured and green=intact particle mapping.
+      Standardize color normalization and output naming for deterministic artifact review.
+    wave: 1
+    agent: gem-planner
+    priority: medium
+    status: pending
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: Heatmap requirements and acceptance criteria
+    estimated_effort: small
+    estimated_files: 1
+    estimated_lines: 90
+    focus_area: null
+    verification:
+      - Color mapping design reviewed and approved
+      - Output naming convention finalized
+    acceptance_criteria:
+      - Mapping clearly encodes fractured vs intact semantics
+      - Overlay preserves particle boundary visibility
+    failure_modes:
+      - scenario: Mid-range circularity colors ambiguous for reviewers
+        likelihood: low
+        impact: low
+        mitigation: Use endpoint-anchored custom LUT and include legend
+    requires_review: true
+    review_depth: lightweight
+    review_security_sensitive: false
+
+  - id: implement-error-code-catalog
+    title: Implement centralized PRD error code catalog and exception helpers
+    description: |
+      Create src/utils/error_codes.py with exact PRD code/message pairs:
+      - ERR_VRAM_001: GPU memory exceeded during segmentation. Reduce image resolution or tile size.
+      - ERR_MASK_002: No valid particles detected after filtering. Check thresholds or image quality.
+      - ERR_IO_003: Failed to read 16-bit TIFF file. Verify file integrity and tifffile library version.
+      - ERR_METRIC_004: Circularity calculation failed: perimeter is zero. Check contour extraction.
+      Provide helper APIs for consistent raising, logging, and serialization.
+    wave: 1
+    agent: gem-implementer
+    priority: high
+    status: pending
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: Canonical errors section (source of truth)
+    estimated_effort: small
+    estimated_files: 2
+    estimated_lines: 180
+    focus_area: null
+    verification:
+      - All four PRD codes/messages exported exactly
+      - Exception helper includes code, message, stage, context
+      - Serialization format usable for tests and logs
+    acceptance_criteria:
+      - Downstream modules use this catalog (single source of truth)
+      - Message text remains byte-for-byte aligned with PRD
+    failure_modes:
+      - scenario: Message drift between modules and PRD
+        likelihood: medium
+        impact: high
+        mitigation: Snapshot test catalog against PRD literals
+    tech_stack:
+      - Python
+      - PyYAML
+    test_coverage: Unit tests for code/message mapping and exception payload format
+    requires_review: true
+    review_depth: standard
+    review_security_sensitive: false
+
+  - id: implement-preprocessing-pipeline
+    title: Build 16-bit TIFF ingestion and CLAHE preprocessing module
+    description: |
+      Implement TIFF loader and CLAHE enhancer preserving 16-bit fidelity before normalization.
+      Wire IO error path to emit ERR_IO_003 with exact PRD message for unreadable/corrupt TIFF files.
+    wave: 2
+    agent: gem-implementer
+    priority: high
+    status: pending
+    dependencies:
+      - setup-conda-environment
+      - implement-error-code-catalog
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: 16-bit ingestion and CLAHE requirements
+    estimated_effort: small
+    estimated_files: 3
+    estimated_lines: 250
+    focus_area: null
+    verification:
+      - Loads all 6 gold_standard images in normal path
+      - Performs CLAHE and outputs uint8 model-ready arrays
+      - Corrupt TIFF fixture triggers ERR_IO_003 exact code/message
+    acceptance_criteria:
+      - No lossy conversion before CLAHE
+      - ERR_IO_003 emitted for unreadable TIFFs
+      - Parameterized CLAHE interface exposed
+    failure_modes:
+      - scenario: Over-enhancement introduces artifacts
+        likelihood: medium
+        impact: medium
+        mitigation: Constrain parameter ranges and compare against originals
+    tech_stack:
+      - tifffile
+      - OpenCV
+      - NumPy
+    test_coverage: Unit tests for 16-bit IO, CLAHE transform, and ERR_IO_003 path
+    requires_review: false
+    review_depth: null
+    review_security_sensitive: false
+
+  - id: integrate-mobilesam-inference
+    title: Integrate MobileSAM automatic inference and mask generation core
+    description: |
+      Implement model loading and automatic mask generation with configurable grid/IoU/stability parameters.
+      Produce stable mask contract for downstream morphological refinement.
+    wave: 3
+    agent: gem-implementer
+    priority: high
+    status: pending
+    dependencies:
+      - setup-conda-environment
+      - implement-preprocessing-pipeline
+      - implement-error-code-catalog
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/nmc811_segmentation_1743108150/research_findings_mobilesam_gpu_optimization.yaml
+        description: MobileSAM loading/inference patterns
+    estimated_effort: medium
+    estimated_files: 2
+    estimated_lines: 260
+    focus_area: null
+    verification:
+      - Model checkpoint loads and runs inference on sample image
+      - Mask payload includes segmentation, area, bbox keys
+      - Inference parameters configurable from config
+    acceptance_criteria:
+      - Automatic mode produces usable masks for all gold_standard images
+      - Downstream modules consume mask schema without adapters
+    failure_modes:
+      - scenario: Low-contrast particles under-detected
+        likelihood: medium
+        impact: high
+        mitigation: Tune generator thresholds and combine with manual refinement flow
+    tech_stack:
+      - PyTorch
+      - SAM2 API
+    test_coverage: Unit tests for model load and mask schema invariants
+    requires_review: true
+    review_depth: standard
+    review_security_sensitive: false
+
+  - id: integrate-mobilesam-controls
+    title: Add VRAM safeguards and manual refinement controls for MobileSAM
+    description: |
+      Implement per-image VRAM cleanup and telemetry.
+      Emit ERR_VRAM_001 with exact PRD message when OOM/stress condition is detected.
+      Add manual point/box refinement interface for ambiguous particle boundaries.
+    wave: 3
+    agent: gem-implementer
+    priority: high
+    status: pending
+    dependencies:
+      - setup-conda-environment
+      - implement-preprocessing-pipeline
+      - implement-error-code-catalog
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: Sequential processing and VRAM constraints
+    estimated_effort: medium
+    estimated_files: 2
+    estimated_lines: 220
+    focus_area: null
+    verification:
+      - VRAM metrics logged after each image
+      - Cache cleanup invoked between images
+      - Forced OOM path emits ERR_VRAM_001 exact code/message
+      - Manual prompt mode updates masks
+    acceptance_criteria:
+      - Standard run remains below VRAM safety target
+      - Error path deterministically emits ERR_VRAM_001
+    failure_modes:
+      - scenario: VRAM growth persists across long runs
+        likelihood: medium
+        impact: high
+        mitigation: Add tensor lifecycle cleanup and memory checkpoints
+    tech_stack:
+      - PyTorch
+      - CUDA utilities
+    test_coverage: Stress + negative tests for VRAM behavior and ERR_VRAM_001
+    requires_review: true
+    review_depth: standard
+    review_security_sensitive: false
+
+  - id: implement-morphological-refinement
+    title: Build morphological opening and edge exclusion pipeline
+    description: |
+      Apply opening operations and clear-border logic to separate touching particles and remove edge artifacts.
+      Produce labeled masks for geometric metric extraction.
+    wave: 4
+    agent: gem-implementer
+    priority: high
+    status: pending
+    dependencies:
+      - integrate-mobilesam-inference
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: Morphological refinement and edge exclusion rules
+    estimated_effort: medium
+    estimated_files: 2
+    estimated_lines: 280
+    focus_area: null
+    verification:
+      - Touching particles are separated in representative dense regions
+      - Border-touching objects excluded per threshold
+      - Label map integrity (unique IDs, background 0)
+    acceptance_criteria:
+      - Kernel shape/size configurable
+      - Separation quality validated visually on gold_standard samples
+    failure_modes:
+      - scenario: Over-erosion removes small valid particles
+        likelihood: medium
+        impact: high
+        mitigation: Tune kernel with guarded defaults and visual checkpointing
+    tech_stack:
+      - OpenCV
+      - scikit-image
+      - NumPy
+    test_coverage: Unit tests for kernel variants and edge exclusion logic
+    requires_review: false
+    review_depth: null
+    review_security_sensitive: false
+
+  - id: tune-clahe-parameters
+    title: Tune CLAHE parameters on representative FIB-SEM samples
+    description: |
+      Run constrained parameter grid on representative images and choose robust defaults.
+      Persist selected values into config for reproducibility.
+    wave: 3
+    agent: gem-implementer
+    priority: medium
+    status: pending
+    dependencies:
+      - implement-preprocessing-pipeline
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/nmc811_segmentation_1743108150/research_findings_Image Preprocessing & Morphological Operations.yaml
+        description: CLAHE tuning guidance
+    estimated_effort: small
+    estimated_files: 2
+    estimated_lines: 150
+    focus_area: null
+    verification:
+      - At least 10 parameter combinations evaluated
+      - Chosen parameters recorded with evidence
+    acceptance_criteria:
+      - Tuned defaults improve particle boundary visibility
+      - Config update documented
+    failure_modes:
+      - scenario: No globally optimal setting across all images
+        likelihood: medium
+        impact: low
+        mitigation: Select conservative midpoint and document fallback ranges
+    tech_stack:
+      - OpenCV
+      - NumPy
+    test_coverage: Visual comparison matrix for parameter candidates
+    requires_review: true
+    review_depth: lightweight
+    review_security_sensitive: false
+
+  - id: extract-geometric-metrics
+    title: Extract geometric metrics and safeguard circularity edge cases
+    description: |
+      Compute area, perimeter, circularity, equivalent diameter, and aspect ratio per particle.
+      Guard perimeter==0 branch and emit ERR_METRIC_004 exact code/message.
+      Export structured metrics dataframe ready for validation filters.
+    wave: 5
+    agent: gem-implementer
+    priority: high
+    status: pending
+    dependencies:
+      - implement-morphological-refinement
+      - implement-error-code-catalog
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: Metrics requirements and circularity formula
+    estimated_effort: medium
+    estimated_files: 1
+    estimated_lines: 250
+    focus_area: null
+    verification:
+      - Circular synthetic shape gives circularity near 1
+      - Elongated shape gives low circularity
+      - Zero-perimeter fixture emits ERR_METRIC_004 exact code/message
+    acceptance_criteria:
+      - C = 4πA/P² implemented and validated
+      - Physical unit conversion applied consistently
+      - ERR_METRIC_004 path non-crashing and traceable
+    failure_modes:
+      - scenario: Division-by-zero disrupts batch processing
+        likelihood: low
+        impact: medium
+        mitigation: Explicit guard + deterministic error emission + continuation policy
+    tech_stack:
+      - scikit-image
+      - pandas
+      - NumPy
+    test_coverage: Unit tests for circularity, conversion, and ERR_METRIC_004
+    requires_review: false
+    review_depth: null
+    review_security_sensitive: false
+
+  - id: tune-morphology-parameters
+    title: Tune morphological kernel strategy for particle separation quality
+    description: |
+      Evaluate kernel shapes/sizes on dense regions and select robust defaults.
+      Balance separation gains against over-erosion risks.
+    wave: 5
+    agent: gem-implementer
+    priority: medium
+    status: pending
+    dependencies:
+      - implement-morphological-refinement
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/nmc811_segmentation_1743108150/research_findings_Image Preprocessing & Morphological Operations.yaml
+        description: Morphology tuning patterns
+    estimated_effort: small
+    estimated_files: 2
+    estimated_lines: 150
+    focus_area: null
+    verification:
+      - Minimum 6 kernel variants tested
+      - Selected kernel documented with examples
+    acceptance_criteria:
+      - Chosen kernel separates touching particles without major erosion artifacts
+      - Config defaults updated
+    failure_modes:
+      - scenario: Single kernel underfits heterogeneous particle scales
+        likelihood: medium
+        impact: medium
+        mitigation: Document adaptive fallback kernel policy
+    tech_stack:
+      - OpenCV
+      - NumPy
+    test_coverage: Visual + synthetic mask separation checks
+    requires_review: true
+    review_depth: lightweight
+    review_security_sensitive: false
+
+  - id: implement-validation-filters
+    title: Apply validation filters and emit empty-result error contract
+    description: |
+      Apply area/aspect-ratio/edge criteria and produce filter statistics.
+      Emit ERR_MASK_002 exact code/message when no valid particles remain after filtering.
+    wave: 6
+    agent: gem-implementer
+    priority: high
+    status: pending
+    dependencies:
+      - extract-geometric-metrics
+      - implement-error-code-catalog
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: validation_thresholds and ERR_MASK_002 definition
+    estimated_effort: small
+    estimated_files: 1
+    estimated_lines: 200
+    focus_area: null
+    verification:
+      - Area and aspect-ratio thresholds enforce PRD ranges
+      - Rejection stats generated by criterion
+      - Zero-valid scenario emits ERR_MASK_002 exact code/message
+    acceptance_criteria:
+      - Output includes validation_status and rejection_reason
+      - Thresholds configurable
+      - ERR_MASK_002 path covered by tests
+    failure_modes:
+      - scenario: Over-filtering erodes statistical significance
+        likelihood: medium
+        impact: high
+        mitigation: Track rejection distribution and support threshold rollback
+    tech_stack:
+      - pandas
+      - NumPy
+    test_coverage: Unit tests for threshold logic and ERR_MASK_002
+    requires_review: false
+    review_depth: null
+    review_security_sensitive: false
+
+  - id: generate-heatmap-visualizations
+    title: Generate circularity heatmaps with PRD-aligned color semantics
+    description: |
+      Implement overlay visualization pipeline producing per-image circularity heatmaps.
+      Use approved color mapping contract from visualization design task.
+    wave: 7
+    agent: gem-implementer
+    priority: medium
+    status: pending
+    dependencies:
+      - implement-validation-filters
+      - design-visualization-system
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: heatmap acceptance criteria
+    estimated_effort: medium
+    estimated_files: 2
+    estimated_lines: 240
+    focus_area: null
+    verification:
+      - Heatmap outputs generated for all 6 images
+      - Fractured particles trend red and intact particles trend green
+    acceptance_criteria:
+      - Output naming follows design contract
+      - Overlays remain interpretable for manual review
+    failure_modes:
+      - scenario: Overlay obscures boundaries in dense regions
+        likelihood: low
+        impact: low
+        mitigation: Adjust alpha and contrast defaults
+    tech_stack:
+      - OpenCV
+      - NumPy
+    test_coverage: Visual regression checks on labeled reference subset
+    requires_review: true
+    review_depth: standard
+    review_security_sensitive: false
+
+  - id: consolidate-csv-export
+    title: Consolidate filtered metrics into analisis_gold_standard.csv
+    description: |
+      Merge per-image filtered metrics into one dataset with stable schema and metadata.
+      Produce Excel-friendly CSV output for downstream analysis.
+    wave: 7
+    agent: gem-implementer
+    priority: medium
+    status: pending
+    dependencies:
+      - implement-validation-filters
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: consolidated CSV export requirement
+    estimated_effort: small
+    estimated_files: 1
+    estimated_lines: 140
+    focus_area: null
+    verification:
+      - CSV generated with consistent schema
+      - No missing critical numeric fields in valid rows
+    acceptance_criteria:
+      - Output filename matches PRD target
+      - Dataset is sortable/readable in Excel
+    failure_modes:
+      - scenario: Schema drift between images blocks merge
+        likelihood: low
+        impact: medium
+        mitigation: Enforce pre-merge schema validation and column coercion
+    tech_stack:
+      - pandas
+    test_coverage: Schema and read/write integrity tests
+    requires_review: false
+    review_depth: null
+    review_security_sensitive: false
+
+  - id: implement-error-code-tests
+    title: Implement negative-path tests asserting PRD error codes and exact messages
+    description: |
+      Add automated tests that explicitly produce and assert each PRD error:
+      - ERR_IO_003 via unreadable TIFF fixture
+      - ERR_VRAM_001 via forced/mocked OOM segmentation condition
+      - ERR_MASK_002 via zero-valid filter scenario
+      - ERR_METRIC_004 via zero-perimeter contour fixture
+      Assertions must validate both exact code and exact message.
+    wave: 7
+    agent: gem-implementer
+    priority: high
+    status: pending
+    dependencies:
+      - implement-preprocessing-pipeline
+      - integrate-mobilesam-controls
+      - extract-geometric-metrics
+      - implement-validation-filters
+      - implement-error-code-catalog
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: authoritative error messages for assertion
+    estimated_effort: small
+    estimated_files: 3
+    estimated_lines: 220
+    focus_area: null
+    verification:
+      - All four codes have dedicated negative-path tests
+      - Tests fail on any code/message mismatch
+      - Test artifacts map each failure to owning module
+    acceptance_criteria:
+      - 100% PRD error-code coverage
+      - Exact message matching (no substring-only checks)
+      - Integrated into validation pipeline
+    failure_modes:
+      - scenario: Mock-only tests miss integration failures
+        likelihood: medium
+        impact: medium
+        mitigation: Include at least one integration-triggered case per code
+    tech_stack:
+      - pytest
+      - NumPy
+      - pandas
+    test_coverage: Dedicated error contract suite for ERR_* codes
+    requires_review: true
+    review_depth: standard
+    review_security_sensitive: false
+
+  - id: build-orchestrator-engine
+    title: Build sequential orchestration engine for module state transitions
+    description: |
+      Implement core engine that executes per-image state transitions and aggregates run summaries.
+      Integrate all module outputs and preserve structured error propagation.
+    wave: 8
+    agent: gem-implementer
+    priority: high
+    status: pending
+    dependencies:
+      - integrate-mobilesam-inference
+      - integrate-mobilesam-controls
+      - implement-preprocessing-pipeline
+      - implement-morphological-refinement
+      - extract-geometric-metrics
+      - implement-validation-filters
+      - consolidate-csv-export
+      - generate-heatmap-visualizations
+      - implement-error-code-catalog
+    conflicts_with:
+      - build-orchestrator-runtime-entrypoint
+    context_files:
+      - path: docs/PRD.yaml
+        description: state machine and acceptance criteria
+    estimated_effort: medium
+    estimated_files: 2
+    estimated_lines: 240
+    focus_area: null
+    verification:
+      - State transition order matches PRD state machine
+      - Per-image processing summary includes timings and status
+      - Error propagation preserves canonical code/message
+    acceptance_criteria:
+      - Engine supports full-batch execution with per-image resilience
+      - Contract boundaries validated between stages
+    failure_modes:
+      - scenario: Tight coupling causes brittle cross-module failures
+        likelihood: medium
+        impact: high
+        mitigation: Enforce interface validation at each stage boundary
+    tech_stack:
+      - Python
+      - pandas
+    test_coverage: Integration tests for stage chaining and failure propagation
+    requires_review: true
+    review_depth: standard
+    review_security_sensitive: false
+
+  - id: build-orchestrator-runtime-entrypoint
+    title: Create main runtime CLI entrypoint with progress and resilience controls
+    description: |
+      Implement main.py wrapper over orchestration engine with runtime flags, progress display, and recovery controls.
+      Expose continue-on-error and checkpoint-friendly execution modes.
+    wave: 9
+    agent: gem-implementer
+    priority: high
+    status: pending
+    dependencies:
+      - build-orchestrator-engine
+    conflicts_with:
+      - build-orchestrator-engine
+    context_files:
+      - path: docs/PRD.yaml
+        description: execution constraints and performance criterion
+    estimated_effort: medium
+    estimated_files: 1
+    estimated_lines: 180
+    focus_area: null
+    verification:
+      - CLI accepts expected arguments
+      - Progress and ETA visible in batch run
+      - Continue-on-error mode behaves as designed
+    acceptance_criteria:
+      - Runtime usable non-interactively for 6-image batch
+      - Structured logs include stage timing and ERR_* events
+    failure_modes:
+      - scenario: Generic wrapper exceptions hide root causes
+        likelihood: medium
+        impact: medium
+        mitigation: Preserve original error payload in log and exit summary
+    tech_stack:
+      - argparse
+      - tqdm
+      - logging
+    test_coverage: CLI smoke tests and resilient mode checks
+    requires_review: true
+    review_depth: standard
+    review_security_sensitive: false
+
+  - id: execute-validation-testing
+    title: Execute end-to-end validation on gold_standard dataset and acceptance matrix
+    description: |
+      Run full pipeline and validate PRD acceptance criteria plus mandatory error contract checks.
+      Include explicit verification that all PRD errors are both producible and asserted.
+    wave: 10
+    agent: gem-browser-tester
+    priority: high
+    status: pending
+    dependencies:
+      - build-orchestrator-runtime-entrypoint
+      - implement-error-code-tests
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: acceptance criteria and error definitions
+      - path: gold_standard/
+        description: validation dataset
+    estimated_effort: medium
+    estimated_files: 1
+    estimated_lines: 220
+    focus_area: null
+    verification:
+      - All PRD functional criteria validated with evidence
+      - Runtime metrics captured (time, VRAM, detection rate)
+      - ERR_VRAM_001, ERR_MASK_002, ERR_IO_003, ERR_METRIC_004 assertions pass
+    acceptance_criteria:
+      - Peak VRAM <7.5GB
+      - Runtime <30 minutes for 6 images
+      - Detection rate >=90% on reference images
+      - All four PRD error contracts verified end-to-end
+    failure_modes:
+      - scenario: Validation passes functional paths but misses negative-path regressions
+        likelihood: medium
+        impact: high
+        mitigation: Gate completion on explicit error contract matrix pass
+    requires_review: true
+    review_depth: standard
+    review_security_sensitive: false
+    validation_matrix:
+      - scenario: ERR_IO_003 verification
+        steps:
+          - Run with unreadable/corrupt TIFF fixture
+          - Capture emitted code/message
+          - Assert exact PRD code and text
+        expected_result: ERR_IO_003 emitted with exact message
+      - scenario: ERR_VRAM_001 verification
+        steps:
+          - Execute forced/mocked OOM segmentation scenario
+          - Capture emitted code/message
+          - Assert exact PRD code and text
+        expected_result: ERR_VRAM_001 emitted with exact message
+      - scenario: ERR_MASK_002 verification
+        steps:
+          - Use strict thresholds yielding zero valid particles
+          - Capture emitted code/message
+          - Assert exact PRD code and text
+        expected_result: ERR_MASK_002 emitted with exact message
+      - scenario: ERR_METRIC_004 verification
+        steps:
+          - Inject zero-perimeter contour case
+          - Capture emitted code/message
+          - Assert exact PRD code and text
+        expected_result: ERR_METRIC_004 emitted with exact message
+
+  - id: create-user-operations-documentation
+    title: Write user guide for setup, execution, outputs, and error recovery
+    description: |
+      Create user-facing documentation focused on operational execution.
+      Include dedicated troubleshooting map for ERR_VRAM_001, ERR_MASK_002, ERR_IO_003, ERR_METRIC_004.
+    wave: 11
+    agent: gem-documentation-writer
+    priority: medium
+    status: pending
+    dependencies:
+      - execute-validation-testing
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: user-level functional requirements and error messages
+    estimated_effort: small
+    estimated_files: 2
+    estimated_lines: 240
+    focus_area: null
+    verification:
+      - Setup and run instructions are reproducible
+      - Troubleshooting includes all four PRD errors
+    acceptance_criteria:
+      - New user can execute pipeline end-to-end from docs
+      - Error recovery steps are actionable and specific
+    failure_modes:
+      - scenario: Missing remediation detail causes repeat failures
+        likelihood: medium
+        impact: medium
+        mitigation: Validate docs against failed-run replay scenarios
+    requires_review: true
+    review_depth: lightweight
+    review_security_sensitive: false
+    task_type: documentation
+    audience: end-users
+    coverage_matrix:
+      - Installation and environment setup
+      - Execution commands and parameters
+      - Output interpretation
+      - Error recovery for PRD ERR_* codes
+
+  - id: create-technical-architecture-documentation
+    title: Write developer documentation for architecture, APIs, and error contract mapping
+    description: |
+      Create technical documentation for module contracts, extension points, and validation strategy.
+      Add explicit PRD error mapping table: code -> emitting module -> asserting test -> validation scenario.
+    wave: 11
+    agent: gem-documentation-writer
+    priority: medium
+    status: pending
+    dependencies:
+      - execute-validation-testing
+    conflicts_with: []
+    context_files:
+      - path: docs/PRD.yaml
+        description: architecture constraints and canonical error definitions
+    estimated_effort: small
+    estimated_files: 2
+    estimated_lines: 260
+    focus_area: null
+    verification:
+      - Architecture and interfaces documented consistently with implementation
+      - Error mapping table covers all four PRD codes and test references
+    acceptance_criteria:
+      - Developers can extend modules using documented contracts
+      - Validation and error-mapping traceability is complete
+    failure_modes:
+      - scenario: Interface docs diverge from implementation over time
+        likelihood: medium
+        impact: medium
+        mitigation: Generate docs after validation lock and verify signatures
+    requires_review: true
+    review_depth: lightweight
+    review_security_sensitive: false
+    task_type: documentation
+    audience: developers
+    coverage_matrix:
+      - Architecture and dependencies
+      - Public interfaces and contracts
+      - Test strategy and validation flow
+      - PRD error contract traceability
